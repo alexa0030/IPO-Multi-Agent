@@ -19,6 +19,91 @@ class ReportWriterAgent:
     def __init__(self, client: OpenAICompatibleClient | None = None) -> None:
         self.client = client
 
+    def write_diligence_draft(
+        self,
+        *,
+        company: str,
+        grounded_draft: str,
+        agent_messages: list[Any] | None = None,
+    ) -> str:
+        """Rewrite a grounded draft; never research or invent new facts."""
+        if self.client is None:
+            return grounded_draft
+        # Large financial tables are deterministic artifacts, not prose for an
+        # LLM to regenerate.  Rewriting them is slow and can silently alter or
+        # truncate figures, so the writer acts as an assembler for long drafts.
+        if len(grounded_draft) > 12000 or "三大财务报表（招股书原表还原）" in grounded_draft:
+            return grounded_draft
+        message_summary = [
+            {
+                "sender": getattr(item, "sender", ""),
+                "type": getattr(item, "message_type", ""),
+                "content": getattr(item, "content", "")[:500],
+            }
+            for item in (agent_messages or [])
+        ]
+        prompt = f"""你是投资机构港股 IPO 尽调报告撰写人。
+请把下方确定性底稿整理成完整、专业、详细的中文 Markdown 公司尽调报告。
+
+强制规则：
+1. 只能重组和解释底稿已有内容，绝对不得新增公司、人物、客户、竞争对手、数字或事件。
+2. 所有 Evidence ID、招股书页码和 URL 必须原样保留。
+3. 必须保留公司股权与业务、行业与竞争、财务、未来盈利、法务负面、跨 Agent 冲突、综合判断和补充尽调清单。
+4. 清楚区分披露事实、公司解释、分析判断和待核查事项。
+5. 不建议投资金额，不给估值上限、退出期限或目标收益率。
+6. 这是公司尽调报告，不是买卖建议或股票交易报告。
+
+Agent 执行摘要：
+{json.dumps(message_summary, ensure_ascii=False)}
+
+确定性底稿：
+{grounded_draft[:50000]}
+"""
+        rewritten = self.client.complete_text(
+            system_prompt=(
+                "你只负责基于已给证据写港股 IPO 公司尽调报告；禁止补充外部事实。"
+            ),
+            user_prompt=prompt,
+            max_tokens=7000,
+        )
+        protected = ("资产负债表", "利润表", "现金流量表")
+        if any(token in grounded_draft and token not in rewritten for token in protected):
+            return grounded_draft
+        if grounded_draft.count("|") and rewritten.count("|") < grounded_draft.count("|"):
+            return grounded_draft
+        return rewritten
+
+    def revise_diligence_draft(
+        self,
+        *,
+        report: str,
+        revision_instructions: list[str],
+    ) -> str:
+        """Apply one bounded reviewer round while preserving citations."""
+        if self.client is None or not revision_instructions:
+            return report
+        prompt = f"""根据终审意见修订港股 IPO 公司尽调报告。
+只能调整现有报告，不得新增事实；必须保留原有 Evidence ID、页码和 URL。
+不得给出投资金额、估值上限、退出期限或目标收益率。
+
+终审意见：
+{json.dumps(revision_instructions, ensure_ascii=False)}
+
+原报告：
+{report[:50000]}
+"""
+        revised = self.client.complete_text(
+            system_prompt="你是尽调报告修订编辑，只执行终审意见，不新增研究结论。",
+            user_prompt=prompt,
+            max_tokens=7000,
+        )
+        protected = ("资产负债表", "利润表", "现金流量表")
+        if any(token in report and token not in revised for token in protected):
+            return report
+        if report.count("|") and revised.count("|") < report.count("|"):
+            return report
+        return revised
+
     def write(
         self,
         *,

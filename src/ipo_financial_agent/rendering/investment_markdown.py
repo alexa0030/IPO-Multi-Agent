@@ -55,6 +55,116 @@ def _entity_lines(items: list[Any]) -> list[str]:
     return lines or ["- 暂无已验证记录。"]
 
 
+_STATEMENT_TITLES = {
+    "balance_sheet": "资产负债表",
+    "income_statement": "利润表",
+    "cash_flow_statement": "现金流量表",
+}
+
+
+def _markdown_cell(value: Any) -> str:
+    text = str(value or "").strip().replace("\r", " ").replace("\n", " ")
+    return text.replace("|", "\\|") or "—"
+
+
+def _select_primary_statement(tables: list[Any], statement_type: str) -> Any | None:
+    """Select the most complete consolidated table without sample-specific hints."""
+    candidates = [
+        table
+        for table in tables
+        if _value(table, "statement_type") == statement_type
+        and _value(table, "rows", [])
+    ]
+    if not candidates:
+        return None
+
+    def score(table: Any) -> tuple[int, int, int]:
+        scope = str(_value(table, "entity_scope", "") or "")
+        consolidated = int(any(word in scope for word in ("合并", "综合", "集团")))
+        return (
+            consolidated,
+            len(_value(table, "rows", []) or []),
+            len(_value(table, "pages", []) or []),
+        )
+
+    return max(candidates, key=score)
+
+
+def _statement_table_lines(table: Any) -> list[str]:
+    rows = [list(row) for row in (_value(table, "rows", []) or []) if row]
+    if not rows:
+        return ["- 未抽取到可展示的原始表格行。"]
+
+    width = max(len(row) for row in rows)
+    normalized = [row + [""] * (width - len(row)) for row in rows]
+    header_index = 0
+    for index, row in enumerate(normalized[:8]):
+        joined = "".join(str(cell) for cell in row)
+        nonempty = sum(bool(str(cell).strip()) for cell in row)
+        if nonempty >= 2 and any(token in joined for token in ("年", "月", "截至", "202", "201")):
+            header_index = index
+            break
+    else:
+        for index, row in enumerate(normalized[:8]):
+            if sum(bool(str(cell).strip()) for cell in row) >= 2:
+                header_index = index
+                break
+
+    lines: list[str] = []
+    preface = [
+        " ".join(_markdown_cell(cell) for cell in row if str(cell).strip())
+        for row in normalized[:header_index]
+    ]
+    if preface:
+        lines.extend([f"> {'；'.join(preface)}", ""])
+
+    header = [_markdown_cell(cell) for cell in normalized[header_index]]
+    seen: dict[str, int] = {}
+    for index, name in enumerate(header):
+        base = name if name != "—" else ("项目" if index == 0 else f"列{index + 1}")
+        seen[base] = seen.get(base, 0) + 1
+        header[index] = base if seen[base] == 1 else f"{base}_{seen[base]}"
+    lines.extend(
+        [
+            "| " + " | ".join(header) + " |",
+            "|" + "|".join("---" for _ in header) + "|",
+        ]
+    )
+    header_key = tuple(header)
+    for row in normalized[header_index + 1 :]:
+        cells = [_markdown_cell(cell) for cell in row]
+        if tuple(cells) == header_key or all(cell == "—" for cell in cells):
+            continue
+        lines.append("| " + " | ".join(cells) + " |")
+    return lines
+
+
+def _financial_statement_lines(state: dict[str, Any]) -> list[str]:
+    tables = list(state.get("raw_statements", []) or [])
+    lines = [
+        "",
+        "### 三大财务报表（招股书原表还原）",
+        "",
+        "> 下表由文档抽取层还原，不由 LLM 生成或补数。单位、口径和页码以招股书原表为准；完整结构化数据同时保存在 Excel、JSON 与 SQLite 中。",
+    ]
+    for statement_type, title in _STATEMENT_TITLES.items():
+        lines.extend(["", f"#### {title}", ""])
+        table = _select_primary_statement(tables, statement_type)
+        if table is None:
+            lines.append(f"- 未识别到{title}原表；该缺口已保留，禁止模型推测或补造数字。")
+            continue
+        pages = "、".join(f"P{page}" for page in (_value(table, "pages", []) or []))
+        metadata = [
+            f"来源：{pages or '页码待核验'}",
+            f"口径：{_value(table, 'entity_scope', None) or '原表未标明'}",
+            f"单位：{_value(table, 'unit', None) or '见原表'}",
+            f"币种：{_value(table, 'currency', None) or '见原表'}",
+        ]
+        lines.extend(["- " + "；".join(metadata), ""])
+        lines.extend(_statement_table_lines(table))
+    return lines
+
+
 def render_due_diligence_markdown(state: dict[str, Any]) -> str:
     """Keep facts, assessments, risks, and unanswered questions separate."""
     company = state.get("company", "未命名公司")
@@ -158,6 +268,7 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
             "暂无通过 Evidence Ledger 校验的财务异常结论。",
         )
     )
+    lines.extend(_financial_statement_lines(state))
     if metrics:
         lines.extend(
             [

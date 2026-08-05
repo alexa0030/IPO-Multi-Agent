@@ -263,6 +263,19 @@ class DueDiligenceConclusion(BaseModel):
         return self
 
 
+class ReportReview(BaseModel):
+    """Evidence/compliance review emitted after the report writer."""
+
+    passed: bool = False
+    score: int = Field(default=0, ge=0, le=100)
+    missing_sections: list[str] = Field(default_factory=list)
+    unsupported_claims: list[str] = Field(default_factory=list)
+    citation_issues: list[str] = Field(default_factory=list)
+    scope_violations: list[str] = Field(default_factory=list)
+    revision_instructions: list[str] = Field(default_factory=list)
+    summary: str = ""
+
+
 class InvestmentDecision(BaseModel):
     """Deprecated compatibility model for pre-Mainline-A artifacts."""
 

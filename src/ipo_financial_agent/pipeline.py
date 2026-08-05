@@ -13,6 +13,8 @@ from ipo_financial_agent.agents.industry_agent import IndustryAgent
 from ipo_financial_agent.agents.legal_governance_agent import LegalGovernanceAgent
 from ipo_financial_agent.agents.prospectus_agent import ProspectusAgent
 from ipo_financial_agent.agents.research_manager import ResearchManagerAgent
+from ipo_financial_agent.agents.report_reviewer import EvidenceComplianceReviewerAgent
+from ipo_financial_agent.agents.report_writer import ReportWriterAgent
 from ipo_financial_agent.agents.risk_reviewer import RiskReviewerAgent
 from ipo_financial_agent.agents.skeptic import SkepticAgent
 from ipo_financial_agent.config import Settings, get_settings
@@ -87,6 +89,8 @@ class IPOFinancialPipeline:
             "run_targeted_followup": self._run_targeted_followup,
             "run_due_diligence_lead": self._run_due_diligence_lead,
             "run_report_writer": self._run_report_writer,
+            "run_report_reviewer": self._run_report_reviewer,
+            "run_report_revision": self._run_report_revision,
             "export_outputs": self._export_outputs,
         }
 
@@ -683,12 +687,121 @@ class IPOFinancialPipeline:
     # ========================
 
     def _run_report_writer(self, state: dict[str, Any]) -> dict[str, Any]:
-        final_report = render_investment_markdown(state)
+        grounded_draft = render_investment_markdown(state)
+        client = None
+        if self._should_use_llm(state["llm_mode"]):
+            client = OpenAICompatibleClient(self.settings)
+        writer_used_llm = bool(
+            client is not None
+            and len(grounded_draft) <= 12000
+            and "三大财务报表（招股书原表还原）" not in grounded_draft
+        )
+        try:
+            final_report = ReportWriterAgent(client).write_diligence_draft(
+                company=state["company"],
+                grounded_draft=grounded_draft,
+                agent_messages=state.get("agent_messages", []),
+            )
+        except Exception as error:
+            print(
+                f"[report-writer] LLM rewrite unavailable "
+                f"({type(error).__name__}); using grounded draft.",
+                flush=True,
+            )
+            final_report = grounded_draft
         print(
             f"[report-writer] Report generated: {len(final_report)} chars",
             flush=True,
         )
-        return {"final_report": final_report}
+        return {
+            "final_report": final_report,
+            "agent_messages": [
+                AgentMessage(
+                    sender="ReportWriter",
+                    receiver="EvidenceComplianceReviewer",
+                    content=(
+                        f"Drafted a {len(final_report)}-character due-diligence report "
+                        f"from the shared research ledger."
+                    ),
+                    message_type="finding",
+                    payload={
+                        "used_llm": writer_used_llm,
+                        "deterministic_financial_tables": True,
+                    },
+                )
+            ],
+        }
+
+    def _run_report_reviewer(self, state: dict[str, Any]) -> dict[str, Any]:
+        client = None
+        if self._should_use_llm(state["llm_mode"]):
+            client = OpenAICompatibleClient(self.settings)
+        review = EvidenceComplianceReviewerAgent(client).review(
+            company=state["company"],
+            report=state.get("final_report", ""),
+        )
+        print(
+            f"[report-reviewer] passed={review.passed}, score={review.score}, "
+            f"revision_items={len(review.revision_instructions)}",
+            flush=True,
+        )
+        return {
+            "report_review": review,
+            "agent_messages": [
+                AgentMessage(
+                    sender="EvidenceComplianceReviewer",
+                    receiver="ReportWriter",
+                    content=(
+                        f"Report review completed: passed={review.passed}, "
+                        f"score={review.score}, "
+                        f"revision_items={len(review.revision_instructions)}."
+                    ),
+                    message_type="challenge" if not review.passed else "decision",
+                    payload=review.model_dump(),
+                )
+            ],
+        }
+
+    def _run_report_revision(self, state: dict[str, Any]) -> dict[str, Any]:
+        review = state.get("report_review")
+        instructions = list(
+            getattr(review, "revision_instructions", []) or []
+        )
+        if not instructions or getattr(review, "passed", False):
+            return {"report_revision_performed": False}
+        client = None
+        if self._should_use_llm(state["llm_mode"]):
+            client = OpenAICompatibleClient(self.settings)
+        if client is None:
+            return {"report_revision_performed": False}
+        try:
+            revised = ReportWriterAgent(client).revise_diligence_draft(
+                report=state.get("final_report", ""),
+                revision_instructions=instructions,
+            )
+        except Exception as error:
+            print(
+                f"[report-revision] revision unavailable ({type(error).__name__}).",
+                flush=True,
+            )
+            return {"report_revision_performed": False}
+        post_review = EvidenceComplianceReviewerAgent().review(
+            company=state["company"], report=revised
+        )
+        return {
+            "final_report": revised,
+            "report_review": post_review,
+            "report_revision_performed": True,
+            "agent_messages": [
+                AgentMessage(
+                    sender="ReportWriter",
+                    receiver="EvidenceComplianceReviewer",
+                    content="Applied one bounded revision round and preserved grounded citations.",
+                    message_type="finding",
+                    payload={"revision_items": len(instructions)},
+                )
+            ],
+        }
 
     # ========================
     # Export (extended with forensic outputs)
@@ -743,6 +856,10 @@ class IPOFinancialPipeline:
         risk_review_json = write_json(
             artifact_dir / "risk_review.json",
             state.get("risk_review"),
+        )
+        report_review_json = write_json(
+            artifact_dir / "report_review.json",
+            state.get("report_review"),
         )
 
         # Research plan + agent messages (event bus)
@@ -852,6 +969,16 @@ class IPOFinancialPipeline:
                 "legal_governance_json": str(legal_governance_json),
                 "due_diligence_json": str(due_diligence_json),
                 "risk_review_json": str(risk_review_json),
+                "report_review_json": str(report_review_json),
+                "report_review_passed": getattr(
+                    state.get("report_review"), "passed", None
+                ),
+                "report_review_score": getattr(
+                    state.get("report_review"), "score", None
+                ),
+                "report_revision_performed": state.get(
+                    "report_revision_performed", False
+                ),
                 "final_report_path": str(final_report_path)
                 if final_report_path
                 else None,

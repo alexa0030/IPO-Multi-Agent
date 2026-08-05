@@ -5,6 +5,7 @@ from ipo_financial_agent.models_agent import (
     Finding,
     FinancialFinding,
 )
+from ipo_financial_agent.models import RawStatementTable
 from ipo_financial_agent.rendering import render_due_diligence_markdown
 
 
@@ -125,3 +126,43 @@ def test_financial_trigger_renders_as_hypothesis_with_escalation_conditions() ->
     assert "待解释观察" in report
     assert "可能解释（待验证）：并购纳入报表范围" in report
     assert "升级为风险的条件：剔除并购后存货仍显著快于收入" in report
+
+
+def test_markdown_renders_three_original_financial_statements() -> None:
+    def table(statement_type: str, name: str, page: int, item: str) -> RawStatementTable:
+        return RawStatementTable(
+            table_id=f"{statement_type}_1",
+            statement_name=name,
+            statement_type=statement_type,
+            company="示例公司",
+            entity_scope="集团/合并",
+            unit="人民币百万元",
+            currency="人民币",
+            pages=[page],
+            rows=[["项目", "2024年", "2023年"], [item, "100", "80"]],
+            row_pages=[page, page],
+            source_file="prospectus.pdf",
+        )
+
+    report = render_due_diligence_markdown(
+        {
+            "company": "示例公司",
+            "research_evidence": [],
+            "research_findings": [],
+            "diligence_questions": [],
+            "metrics": [],
+            "challenges": [],
+            "raw_statements": [
+                table("balance_sheet", "资产负债表", 100, "现金"),
+                table("income_statement", "利润表", 110, "收入"),
+                table("cash_flow_statement", "现金流量表", 120, "经营活动现金流"),
+            ],
+        }
+    )
+
+    assert "### 三大财务报表（招股书原表还原）" in report
+    assert "#### 资产负债表" in report
+    assert "#### 利润表" in report
+    assert "#### 现金流量表" in report
+    assert "来源：P100" in report
+    assert "| 经营活动现金流 | 100 | 80 |" in report

@@ -4,13 +4,14 @@ IPO Investment Research Multi-Agent Collaboration Graph
 Architecture:
     START -> document_prepare (data layer: PDF load + section detect)
           -> research_manager  (agent layer: plan research tasks)
-          -> [fan-out: 3 parallel Agent branches]
+          -> [fan-out: 4 parallel Agent branches]
               |- Financial Analyst Agent (Tool-Augmented:
               |    internally calls extraction, metrics, forensic engine)
               |- Prospectus Agent
               |- Industry Agent
+              |- Legal & Governance Agent
           -> [fan-in] Investment Committee Agent (cross-check + contradiction)
-          -> Report Writer Agent
+          -> Report Writer Agent -> Evidence/Compliance Reviewer -> bounded revision
           -> export_outputs -> END
 
 Key architectural principle:
@@ -71,6 +72,8 @@ class IPOAnalysisState(TypedDict, total=False):
     # --- fan-in + final ---
     risk_review: Any  # RiskReview
     final_report: str  # final markdown report
+    report_review: Any  # ReportReview
+    report_revision_performed: bool
     artifacts: Any
 
 
@@ -87,6 +90,8 @@ ORDERED_NODES = [
     "run_targeted_followup",
     "run_due_diligence_lead",
     "run_report_writer",
+    "run_report_reviewer",
+    "run_report_revision",
     "export_outputs",
 ]
 
@@ -133,7 +138,9 @@ def build_graph(nodes: dict[str, Any]):
         |- run_financial_agent (Tool-Augmented: extraction+metrics+forensic+reasoning)
         |- run_prospectus_agent
         |- run_industry_agent
-      -> run_risk_reviewer -> run_report_writer -> export_outputs -> END
+        |- run_legal_governance_agent
+      -> run_risk_reviewer -> skeptic -> DD lead -> writer -> final reviewer
+      -> bounded revision -> export_outputs -> END
 
     The financial branch is a SINGLE Agent node (not a 5-step pipeline).
     The Financial Analyst Agent internally orchestrates its tools.
@@ -152,13 +159,13 @@ def build_graph(nodes: dict[str, Any]):
     graph.add_edge(START, "document_prepare")
     graph.add_edge("document_prepare", "research_manager")
 
-    # Fan-out: manager -> 3 parallel Agent branches
+    # Fan-out: manager -> 4 parallel Agent branches
     graph.add_edge("research_manager", "run_financial_agent")
     graph.add_edge("research_manager", "run_prospectus_agent")
     graph.add_edge("research_manager", "run_industry_agent")
     graph.add_edge("research_manager", "run_legal_governance_agent")
 
-    # Fan-in: 3 branches -> risk_reviewer (Investment Committee)
+    # Fan-in: 4 branches -> risk_reviewer (Investment Committee)
     graph.add_edge("run_financial_agent", "run_risk_reviewer")
     graph.add_edge("run_prospectus_agent", "run_risk_reviewer")
     graph.add_edge("run_industry_agent", "run_risk_reviewer")
@@ -181,7 +188,9 @@ def build_graph(nodes: dict[str, Any]):
     )
     graph.add_edge("run_targeted_followup", "run_due_diligence_lead")
     graph.add_edge("run_due_diligence_lead", "run_report_writer")
-    graph.add_edge("run_report_writer", "export_outputs")
+    graph.add_edge("run_report_writer", "run_report_reviewer")
+    graph.add_edge("run_report_reviewer", "run_report_revision")
+    graph.add_edge("run_report_revision", "export_outputs")
     graph.add_edge("export_outputs", END)
 
     return graph.compile()
