@@ -318,7 +318,11 @@ class RiskReviewerAgent:
                 continue
             rule_id = f.get("rule_id", "")
             # Revenue authenticity issues contradict any growth claims
-            if rule_id.startswith("RA-") and _has_claim(prospectus_text, "growth"):
+            if (
+                rule_id.startswith("RA-")
+                and f.get("assessment_status") in {"unexplained", "contradiction"}
+                and _has_claim(prospectus_text, "growth")
+            ):
                 contradictions.append(
                     Contradiction(
                         type="red_flag",
@@ -374,13 +378,22 @@ class RiskReviewerAgent:
         for f in triggered_findings:
             severity = f.get("severity", "info")
             impact = self._severity_to_level(severity)
+            is_observation = f.get("assessment_status") == "observation"
             # Layer 2 (trend) findings have higher probability
-            probability = "High" if f.get("layer", 1) == 2 else "Medium"
+            probability = (
+                "Low"
+                if is_observation
+                else ("High" if f.get("layer", 1) == 2 else "Medium")
+            )
 
             matrix.append(
                 RiskMatrixItem(
                     risk_name=f"[{f.get('rule_id', '')}] {f.get('name', '')}",
-                    category=f.get("category", "financial"),
+                    category=(
+                        "financial_observation"
+                        if is_observation
+                        else f.get("category", "financial")
+                    ),
                     probability=probability,
                     impact=impact,
                     score=self._calc_score(probability, impact),
@@ -567,6 +580,9 @@ class RiskReviewerAgent:
                 "triggered": getattr(f, "triggered", False),
                 "description": getattr(f, "description", "")[:200],
                 "recommendation": getattr(f, "recommendation", "")[:150],
+                "assessment_status": getattr(f, "assessment_status", "observation"),
+                "possible_explanations": getattr(f, "possible_explanations", []),
+                "required_evidence": getattr(f, "required_evidence", []),
             }
             for f in findings
         ]
@@ -596,8 +612,11 @@ class RiskReviewerAgent:
     ) -> list[str]:
         major: list[str] = []
         for r in fin_risks[:5]:
-            major.append(r["title"])
+            if r.get("assessment_status") != "observation":
+                major.append(r["title"])
         for f in triggered_findings[:5]:
+            if f.get("assessment_status") == "observation":
+                continue
             name = f"[{f.get('rule_id', '')}] {f.get('name', '')}"
             if name not in major:
                 major.append(name)

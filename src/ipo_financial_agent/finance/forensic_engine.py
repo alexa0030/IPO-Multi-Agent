@@ -552,7 +552,7 @@ class FinancialForensicEngine:
         """EQ-002: Cash-to-revenue ratio persistently below 0.5."""
         ocf_map = fact_map.get("operating_cash_flow", {})
         rev_map = fact_map.get("revenue", {})
-        periods = _sort_periods([p for p in ocf_map.keys() if p in rev_map])
+        periods = _sort_periods([p for p in ocf_map if p in rev_map])
 
         if not periods:
             return self._insufficient("EQ-002", "收现比持续低于0.5", self.CAT_EARNINGS, 1,
@@ -582,6 +582,10 @@ class FinancialForensicEngine:
                      "periods_below_0.5": sum(1 for _, r in ratios if r < 0.5)},
             evidence=[Evidence(page=ocf_map[periods[-1]].page, source="cash_flow_statement",
                                detail=f"OCF={ocf_map[periods[-1]].value:.0f}, Rev={rev_map[periods[-1]].value:.0f}")],
+            assessment_status="observation",
+            possible_explanations=["客户信用期及结算周期", "扩张期营运资金投入", "并购并表口径变化", "回款恶化或收入失真"],
+            required_evidence=["销售收现口径说明", "应收账龄及期后回款", "并购前后现金流桥接", "主要客户结算条款"],
+            escalation_conditions=["多年持续恶化", "异常第三方回款", "合同物流发票回款无法闭环"],
         )
 
     def _eq003_long_cash_cycle(
@@ -752,6 +756,10 @@ class FinancialForensicEngine:
             description=f"selling_expense_ratio trend: {', '.join(f'{p}={v:.1%}' for p, v in series)}",
             metrics={"latest_ratio": round(series[-1][1], 4), "rising_periods": len(series) - 1 if rising else 0},
             evidence=[Evidence(page=0, source="metric", detail="selling_expense / revenue")],
+            assessment_status="observation",
+            possible_explanations=["海外或新市场拓展", "销售团队扩张", "并购带入销售费用", "获客效率下降或竞争加剧"],
+            required_evidence=["销售费用分项", "销售人员数量", "新市场收入贡献", "并购前后费用桥接"],
+            escalation_conditions=["费用率显著高于同行", "费用增加但客户及收入没有对应增长", "异常渠道或关联方付款"],
         )
 
     def _ra002_salary_revenue_anomaly(
@@ -831,7 +839,11 @@ class FinancialForensicEngine:
                 Evidence(page=entries[-1]["page"], source="cash_flow_statement", detail=f"tax period={entries[-1]['period']}"),
                 Evidence(page=rev_series[-1][1].page, source="income_statement", detail=f"revenue period={rev_series[-1][0]}"),
             ],
-            recommendation="Revenue can be manipulated; tax must be paid in cash. Divergence is a red flag." if triggered else "",
+            recommendation="核对税款支付时点、税收优惠、递延所得税及并购口径后再判断。" if triggered else "",
+            assessment_status="observation",
+            possible_explanations=["所得税支付时点差异", "税收优惠或亏损抵扣", "递延所得税变化", "并购并表口径", "收入确认异常"],
+            required_evidence=["当期所得税费用与已付所得税桥接", "纳税申报及完税证明", "税收优惠依据", "并购前后税务口径"],
+            escalation_conditions=["应纳税收入与申报收入不一致", "无优惠或时点差异仍长期背离", "税务资料与财务披露冲突"],
         )
 
     def _ra004_per_capita_efficiency(

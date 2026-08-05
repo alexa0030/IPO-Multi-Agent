@@ -311,6 +311,12 @@ class FinancialFinding(BaseModel):
     evidence: list[Evidence] = Field(default_factory=list)
     interpretation: str = ""
     recommendation: str = ""
+    assessment_status: Literal[
+        "observation", "partially_explained", "unexplained", "contradiction"
+    ] = "observation"
+    possible_explanations: list[str] = Field(default_factory=list)
+    required_evidence: list[str] = Field(default_factory=list)
+    escalation_conditions: list[str] = Field(default_factory=list)
 
 
 # ==================== Prospectus Analysis (Tool-Augmented) ====================
