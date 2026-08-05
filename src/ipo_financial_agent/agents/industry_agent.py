@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 from ipo_financial_agent.llm.client import OpenAICompatibleClient
 from ipo_financial_agent.llm.prompts_agents import INDUSTRY_ANALYSIS_SYSTEM_PROMPT
@@ -171,6 +172,15 @@ class IndustryAgent:
 
     @staticmethod
     def _web_evidence(results: list[dict[str, Any]]) -> list[Evidence]:
+        topic_domains: dict[str, set[str]] = {}
+        topic_has_authoritative: dict[str, bool] = {}
+        for result in results:
+            topic = result.get("topic", "industry")
+            host = (urlparse(result.get("url", "")).hostname or "").lower()
+            if host:
+                topic_domains.setdefault(topic, set()).add(host)
+            if result.get("source_tier") in {"official", "primary"}:
+                topic_has_authoritative[topic] = True
         return [
             Evidence(
                 source_type="web",
@@ -187,7 +197,19 @@ class IndustryAgent:
                     "publisher": result.get("publisher", ""),
                     "query": result.get("query", ""),
                     "source_scope": "external",
-                    "independently_verified": True,
+                    # External does not automatically mean corroborated.  This is
+                    # topic-level coverage only; the Reviewer still verifies claims.
+                    "independently_verified": (
+                        len(topic_domains.get(result.get("topic", "industry"), set())) >= 2
+                        and topic_has_authoritative.get(
+                            result.get("topic", "industry"), False
+                        )
+                    ),
+                    "topic_source_count": len(
+                        topic_domains.get(result.get("topic", "industry"), set())
+                    ),
+                    "search_provider": result.get("search_provider", result.get("provider", "")),
+                    "search_cost_mode": result.get("search_cost_mode", ""),
                 },
             )
             for result in results

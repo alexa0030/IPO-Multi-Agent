@@ -49,7 +49,9 @@ flowchart LR
 - 6 条基础风险规则和 20 条财务法证规则；
 - 公司业务、财务、行业三个研究分支及跨 Agent 冲突检查；
 - Skeptic 挑战路由和单轮定向补证，避免无界 Agent 循环；
-- Tavily 可选联网检索，优先标记港交所、证监会等官方来源；
+- 可插拔联网检索：Tavily 作为稳定的低额度 API 路径，DDGS 作为需显式启用的零 API 成本本地演示路径；
+- 12 类尽调查询覆盖上市文件、监管、股权、诉讼、关联方、客户供应商、融资负债、审计真实性、行业、竞品、政策及负面舆情；
+- 记录查询预算、检索缺口与来源等级；外部网页不会被自动视为已独立验证；
 - Markdown 投资报告、Excel 财务底稿、JSON 中间产物和 SQLite 存档；
 - OpenAI-compatible 模型接口，支持本地 vLLM；
 - 无模型、无搜索密钥时仍可离线运行，且不伪造外部信息。
@@ -83,6 +85,9 @@ OPENAI_COMPATIBLE_API_KEY=your_key
 OPENAI_COMPATIBLE_BASE_URL=http://127.0.0.1:8000/v1
 OPENAI_COMPATIBLE_MODEL=your_model
 TAVILY_API_KEY=your_tavily_key
+# 仅在本机已验证可访问公共搜索引擎时启用；云服务器默认留空
+IPO_SEARCH_PROVIDER=
+IPO_SEARCH_MAX_QUERIES=12
 ```
 
 `auto` 在模型可用时调用模型，否则安全降级；`on` 在配置缺失时直接报错；`off` 不调用模型。

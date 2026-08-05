@@ -13,6 +13,9 @@ class SearchQuery(BaseModel):
     topic: str
     domains: list[str] = Field(default_factory=list)
     max_results: int = Field(default=5, ge=1, le=10)
+    priority: Literal["P0", "P1", "P2"] = "P1"
+    purpose: str = ""
+    required: bool = True
 
 
 class SearchResult(BaseModel):
@@ -30,6 +33,7 @@ class SearchResult(BaseModel):
         "unknown"
     )
     confidence: float = Field(default=0.5, ge=0, le=1)
+    provider: str = ""
 
     @field_validator("url")
     @classmethod
@@ -38,3 +42,16 @@ class SearchResult(BaseModel):
             raise ValueError("search result URL must use HTTP(S)")
         return value
 
+
+class SearchRun(BaseModel):
+    """Auditable result of one bounded external-research run."""
+
+    provider: str = "unavailable"
+    cost_mode: Literal["free_best_effort", "free_quota", "paid", "unavailable"] = (
+        "unavailable"
+    )
+    queries: list[SearchQuery] = Field(default_factory=list)
+    results: list[SearchResult] = Field(default_factory=list)
+    covered_topics: list[str] = Field(default_factory=list)
+    missing_topics: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
