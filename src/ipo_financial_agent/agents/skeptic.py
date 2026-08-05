@@ -90,21 +90,33 @@ class SkepticAgent:
         if any(
             keyword in lowered
             for keyword in (
+                "regulatory",
+                "litigation",
+                "penalty",
+                "related party",
+                "controller",
+                "\u76d1\u7ba1",
+                "\u8bc9\u8bbc",
+                "\u5904\u7f5a",
+                "\u5173\u8054\u4ea4\u6613",
+                "\u5b9e\u63a7\u4eba",
+            )
+        ):
+            return "legal_governance"
+        if any(
+            keyword in lowered
+            for keyword in (
                 "industry",
                 "market",
                 "valuation",
-                "regulatory",
-                "litigation",
                 "search",
                 "\u884c\u4e1a",
                 "\u5e02\u573a",
                 "\u4f30\u503c",
-                "\u76d1\u7ba1",
-                "\u8bc9\u8bbc",
                 "\u641c\u7d22",
             )
         ):
-            return "market_valuation"
+            return "industry_competition"
         if any(
             keyword in lowered
             for keyword in (
@@ -125,8 +137,10 @@ class SkepticAgent:
 
     @staticmethod
     def _required_evidence(target: str) -> list[str]:
-        if target == "market_valuation":
+        if target == "industry_competition":
             return ["official regulator or exchange source", "dated external URL"]
+        if target == "legal_governance":
+            return ["prospectus legal section", "official registry or court source"]
         if target == "financial_dd":
             return [
                 "source financial statement page",

@@ -5,8 +5,10 @@ import re
 from pathlib import Path
 from typing import Any
 
+from ipo_financial_agent.agents.due_diligence_lead import DueDiligenceLeadAgent
 from ipo_financial_agent.agents.financial_agent import FinancialAnalysisAgent
 from ipo_financial_agent.agents.industry_agent import IndustryAgent
+from ipo_financial_agent.agents.legal_governance_agent import LegalGovernanceAgent
 from ipo_financial_agent.agents.prospectus_agent import ProspectusAgent
 from ipo_financial_agent.agents.research_manager import ResearchManagerAgent
 from ipo_financial_agent.agents.risk_reviewer import RiskReviewerAgent
@@ -27,6 +29,7 @@ from ipo_financial_agent.rendering import render_investment_markdown
 from ipo_financial_agent.research import (
     financial_research_patch,
     industry_research_patch,
+    legal_governance_research_patch,
     prospectus_research_patch,
 )
 from ipo_financial_agent.storage.evidence_store import EvidenceStore
@@ -75,9 +78,11 @@ class IPOFinancialPipeline:
             "run_financial_agent": self._run_financial_agent,
             "run_prospectus_agent": self._run_prospectus_agent,
             "run_industry_agent": self._run_industry_agent,
+            "run_legal_governance_agent": self._run_legal_governance_agent,
             "run_risk_reviewer": self._run_risk_reviewer,
             "run_skeptic": self._run_skeptic,
             "run_targeted_followup": self._run_targeted_followup,
+            "run_due_diligence_lead": self._run_due_diligence_lead,
             "run_report_writer": self._run_report_writer,
             "export_outputs": self._export_outputs,
         }
@@ -386,6 +391,39 @@ class IPOFinancialPipeline:
             "agent_messages": [msg],
         }
 
+    def _run_legal_governance_agent(self, state: dict[str, Any]) -> dict[str, Any]:
+        result = LegalGovernanceAgent().analyze(
+            company=state["company"],
+            pages=state.get("pages", []),
+        )
+        patch = legal_governance_research_patch(result)
+        print(
+            f"[legal-governance-agent] leads={len(result.evidence)}, "
+            f"findings={len(patch.findings)}",
+            flush=True,
+        )
+        msg = AgentMessage(
+            sender="LegalGovernanceAgent",
+            receiver="DueDiligenceLead",
+            content=(
+                f"Legal/governance surface review complete: "
+                f"{len(result.evidence)} page-level leads."
+            ),
+            message_type="finding",
+            payload={
+                "evidence_count": len(result.evidence),
+                "finding_count": len(patch.findings),
+                "legal_opinion": False,
+            },
+        )
+        return {
+            "legal_governance_analysis": result,
+            "research_evidence": patch.evidence,
+            "research_findings": patch.findings,
+            "open_questions": patch.open_questions,
+            "agent_messages": [msg],
+        }
+
     # ========================
     # Fan-in: Investment Committee Agent
     # ========================
@@ -479,7 +517,10 @@ class IPOFinancialPipeline:
         evidence: list[Evidence] = []
         unresolved: list[str] = []
         for challenge in state.get("challenges", []):
-            if challenge.target_agent != "market_valuation":
+            if challenge.target_agent not in {
+                "industry_competition",
+                "legal_governance",
+            }:
                 unresolved.append(challenge.question)
                 continue
             results = search_targeted_followup(state["company"], challenge.question)
@@ -511,6 +552,43 @@ class IPOFinancialPipeline:
         return {
             "research_evidence": evidence,
             "followup_round": 1,
+        }
+
+    def _run_due_diligence_lead(self, state: dict[str, Any]) -> dict[str, Any]:
+        conclusion, questions = DueDiligenceLeadAgent().synthesize(
+            findings=state.get("research_findings", []),
+            challenges=state.get("challenges", []),
+            risk_review=state.get("risk_review"),
+            metrics=state.get("metrics", []),
+            financial_findings=state.get("financial_findings", []),
+        )
+        print(
+            f"[due-diligence-lead] verdict={conclusion.verdict}, "
+            f"follow_up_questions={len(questions)}",
+            flush=True,
+        )
+        return {
+            "due_diligence_conclusion": conclusion,
+            "diligence_questions": questions,
+            "agent_messages": [
+                AgentMessage(
+                    sender="DueDiligenceLead",
+                    receiver="ReportWriter",
+                    content=(
+                        f"Mainline A conclusion: {conclusion.verdict}; "
+                        f"{len(questions)} follow-up questions."
+                    ),
+                    message_type="decision",
+                    payload={
+                        "verdict": conclusion.verdict,
+                        "historical_financial_quality": (
+                            conclusion.historical_financial_quality
+                        ),
+                        "future_earning_power": conclusion.future_earning_power,
+                        "material_risk_level": conclusion.material_risk_level,
+                    },
+                )
+            ],
         }
 
     # ========================
@@ -563,6 +641,17 @@ class IPOFinancialPipeline:
         industry_json = write_json(
             artifact_dir / "industry_analysis.json",
             state.get("industry_analysis"),
+        )
+        legal_governance_json = write_json(
+            artifact_dir / "legal_governance_analysis.json",
+            state.get("legal_governance_analysis"),
+        )
+        due_diligence_json = write_json(
+            artifact_dir / "due_diligence_conclusion.json",
+            {
+                "conclusion": state.get("due_diligence_conclusion"),
+                "follow_up_questions": state.get("diligence_questions", []),
+            },
         )
         risk_review_json = write_json(
             artifact_dir / "risk_review.json",
@@ -617,7 +706,7 @@ class IPOFinancialPipeline:
         final_report = state.get("final_report", "")
         if final_report:
             final_report_path = (
-                self.settings.output_dir / f"{document_id}_ipo_research_report.md"
+                self.settings.output_dir / f"{document_id}_due_diligence_report.md"
             )
             write_markdown_report(final_report_path, final_report)
 
@@ -673,6 +762,8 @@ class IPOFinancialPipeline:
                 "llm_mode": state.get("llm_mode", "auto"),
                 "prospectus_json": str(prospectus_json),
                 "industry_json": str(industry_json),
+                "legal_governance_json": str(legal_governance_json),
+                "due_diligence_json": str(due_diligence_json),
                 "risk_review_json": str(risk_review_json),
                 "final_report_path": str(final_report_path)
                 if final_report_path
@@ -688,6 +779,10 @@ class IPOFinancialPipeline:
                 "challenge_count": len(state.get("challenges", [])),
                 "unresolved_challenge_count": len(state.get("challenges", [])),
                 "followup_round": state.get("followup_round", 0),
+                "due_diligence_verdict": getattr(
+                    state.get("due_diligence_conclusion"), "verdict", None
+                ),
+                "diligence_question_count": len(state.get("diligence_questions", [])),
                 # Forensic engine metadata
                 "forensic_findings_json": str(forensic_findings_json),
                 "rule_events_json": str(rule_events_json),

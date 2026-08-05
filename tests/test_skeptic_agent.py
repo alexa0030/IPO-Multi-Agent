@@ -33,7 +33,7 @@ def test_skeptic_prioritizes_contradictions_and_caps_challenges() -> None:
     assert challenges[0].severity == "critical"
     assert challenges[0].target_agent == "financial_dd"
     assert challenges[1].challenged_finding_id == finding.finding_id
-    assert challenges[2].target_agent == "market_valuation"
+    assert challenges[2].target_agent == "industry_competition"
 
 
 def test_skeptic_routes_chinese_financial_and_market_questions() -> None:
@@ -45,5 +45,9 @@ def test_skeptic_routes_chinese_financial_and_market_questions() -> None:
     )
     assert (
         agent._target_for_text("\u641c\u7d22\u884c\u4e1a\u5e02\u573a\u4efd\u989d")
-        == "market_valuation"
+        == "industry_competition"
+    )
+    assert (
+        agent._target_for_text("\u6838\u67e5\u8bc9\u8bbc\u548c\u76d1\u7ba1\u5904\u7f5a")
+        == "legal_governance"
     )

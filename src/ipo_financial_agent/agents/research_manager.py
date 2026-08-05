@@ -1,8 +1,10 @@
-"""Research Manager Agent - 研究经理，规划研究任务并分配给专业 Agent。"""
+"""Mainline A research manager for company due diligence planning."""
+
 from __future__ import annotations
 
 import json
-from typing import Any
+import re
+from typing import Any, ClassVar
 
 from ipo_financial_agent.llm.client import OpenAICompatibleClient
 from ipo_financial_agent.llm.prompts_agents import RESEARCH_MANAGER_SYSTEM_PROMPT
@@ -10,16 +12,14 @@ from ipo_financial_agent.models_agent import ResearchPlan, ResearchTask
 
 
 class ResearchManagerAgent:
-    """
-    研究经理 Agent
+    """Assign bounded evidence questions to four specialist roles."""
 
-    职责：
-    - 接收文档概况（页数、章节数、公司名）
-    - 规划研究任务，为每个专业 Agent 设定目标和优先级
-    - 输出 ResearchPlan，驱动后续 Agent 并行执行
-
-    这不是数据加载节点，而是真正的 Agent 决策节点。
-    """
+    ALLOWED_AGENTS: ClassVar[set[str]] = {
+        "company_business",
+        "financial_dd",
+        "industry_competition",
+        "legal_governance",
+    }
 
     def __init__(self, client: OpenAICompatibleClient | None = None) -> None:
         self.client = client
@@ -34,66 +34,82 @@ class ResearchManagerAgent:
             return self._default_plan(company, document_summary)
         return self._plan_with_llm(company, document_summary)
 
+    @staticmethod
     def _default_plan(
-        self,
         company: str,
         document_summary: dict[str, Any],
     ) -> ResearchPlan:
-        page_count = document_summary.get("page_count", 0)
-        section_count = document_summary.get("section_count", 0)
-        section_names = document_summary.get("section_names", [])
-
         tasks = [
             ResearchTask(
-                agent="prospectus",
-                objective=(
-                    f"分析{company}的商业模式、核心产品、客户结构、"
-                    f"供应商体系和竞争优势"
+                agent_name="company_business",
+                question=(
+                    f"{company} sells what, to whom, under which commercial model, "
+                    "and with what ownership and management structure?"
                 ),
+                reason="Establish the inside-out company and business case.",
+                expected_evidence=[
+                    "prospectus business pages",
+                    "ownership and management pages",
+                    "customer and supplier disclosures",
+                ],
                 priority="high",
             ),
             ResearchTask(
-                agent="financial",
-                objective=(
-                    f"评估{company}的财务质量，重点关注盈利能力、"
-                    f"现金流健康度、资产负债结构和收入质量"
+                agent_name="financial_dd",
+                question=(
+                    f"Has {company} generated sustainable earnings and cash without "
+                    "deteriorating working capital or leverage?"
                 ),
+                reason="Test historical financial quality with deterministic calculations.",
+                expected_evidence=[
+                    "primary financial statements",
+                    "financial notes",
+                    "calculation traces",
+                ],
                 priority="high",
             ),
             ResearchTask(
-                agent="industry",
-                objective=(
-                    f"研究{company}所处行业的市场规模、竞争格局、"
-                    f"增长趋势和行业风险"
+                agent_name="industry_competition",
+                question=(
+                    f"Does {company}'s industry structure and competitive position "
+                    "support future earning power?"
                 ),
-                priority="normal",
+                reason="Validate company claims with non-prospectus evidence.",
+                expected_evidence=[
+                    "dated external industry source",
+                    "competitor evidence",
+                    "market-share methodology",
+                ],
+                priority="high",
+            ),
+            ResearchTask(
+                agent_name="legal_governance",
+                question=(
+                    f"Does {company} disclose material legal, governance, related-party, "
+                    "controller, licensing, or adverse-information risks?"
+                ),
+                reason="Identify non-financial matters that may pause diligence.",
+                expected_evidence=[
+                    "prospectus legal and governance pages",
+                    "official registry, regulator, or court source",
+                ],
+                priority="high",
             ),
         ]
-
-        focus_areas = ["商业模式", "财务质量", "行业竞争"]
-        if section_names:
-            risk_sections = [
-                s for s in section_names if "risk" in s.lower() or "风险" in s
-            ]
-            if risk_sections:
-                focus_areas.append("风险因素")
-                tasks[0].priority = "high"
-
-        notes = (
-            f"文档概况：{page_count}页，检测到{section_count}个章节"
-        )
-        if section_names:
-            notes += f"（{', '.join(section_names[:5])}）"
-        notes += (
-            f"。启动三个专业 Agent 并行研究，"
-            f"重点关注：{', '.join(focus_areas)}。"
-        )
-
+        page_count = document_summary.get("page_count", 0)
+        section_count = document_summary.get("section_count", 0)
         return ResearchPlan(
             company=company,
             tasks=tasks,
-            manager_notes=notes,
-            focus_areas=focus_areas,
+            manager_notes=(
+                f"Mainline A plan for {page_count} pages and {section_count} detected "
+                "sections. Four specialists must return structured evidence and findings."
+            ),
+            focus_areas=[
+                "past and present financial quality",
+                "future earning power",
+                "material negative risk",
+            ],
         )
 
     def _plan_with_llm(
@@ -110,64 +126,53 @@ class ResearchManagerAgent:
             },
             ensure_ascii=False,
         )
+        prompt = f"""Create a bounded Mainline A Hong Kong IPO due diligence plan.
+Available agents: company_business, financial_dd, industry_competition, legal_governance.
+Every task must ask an evidence question and name expected evidence. Do not request an
+investment amount, valuation ceiling, exit plan, or post-listing price forecast.
 
-        prompt = (
-            f"请为{company}制定港股 IPO 研究计划。\n"
-            "根据文档概况，决定需要哪些 Agent 参与分析，"
-            "并为每个 Agent 设定研究目标和优先级。\n"
-            "可用 Agent：prospectus（招股书分析）、"
-            "financial（财务分析）、industry（行业研究）。\n\n"
-            f"文档概况：\n{context}"
-        )
+Document context:
+{context}
 
+Return JSON with a tasks array. Each task contains agent, objective, priority.
+"""
         markdown = self.client.complete_text(
             system_prompt=RESEARCH_MANAGER_SYSTEM_PROMPT,
             user_prompt=prompt,
-            max_tokens=800,
+            max_tokens=1000,
         )
-
         return self._parse_llm_plan(company, markdown, document_summary)
 
-    @staticmethod
+    @classmethod
     def _parse_llm_plan(
+        cls,
         company: str,
         markdown: str,
         document_summary: dict[str, Any],
     ) -> ResearchPlan:
-        import re
-
         tasks: list[ResearchTask] = []
-        agent_pattern = re.compile(
-            r'"agent"\s*:\s*"(prospectus|financial|industry)"'
-        )
-        objective_pattern = re.compile(
-            r'"objective"\s*:\s*"([^"]*)"'
-        )
-        priority_pattern = re.compile(
-            r'"priority"\s*:\s*"(high|normal|low)"'
-        )
-
-        agents = agent_pattern.findall(markdown)
-        objectives = objective_pattern.findall(markdown)
-        priorities = priority_pattern.findall(markdown)
-
-        for i, agent in enumerate(agents):
-            objective = objectives[i] if i < len(objectives) else ""
-            priority = priorities[i] if i < len(priorities) else "normal"
-            tasks.append(
-                ResearchTask(
-                    agent=agent,
-                    objective=objective,
-                    priority=priority,
+        try:
+            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", markdown.strip())
+            payload = json.loads(text)
+            for item in payload.get("tasks", []):
+                agent = str(item.get("agent", ""))
+                objective = str(item.get("objective", ""))
+                if agent not in cls.ALLOWED_AGENTS or not objective:
+                    continue
+                tasks.append(
+                    ResearchTask(
+                        agent_name=agent,
+                        question=objective,
+                        priority=item.get("priority", "normal"),
+                    )
                 )
-            )
-
-        if not tasks:
-            return ResearchManagerAgent._default_plan(company, document_summary)
-
+        except (TypeError, ValueError, json.JSONDecodeError):
+            tasks = []
+        if len({item.agent_name for item in tasks}) != len(cls.ALLOWED_AGENTS):
+            return cls._default_plan(company, document_summary)
         return ResearchPlan(
             company=company,
             tasks=tasks,
             manager_notes=markdown[:500],
-            focus_areas=[t.agent for t in tasks],
+            focus_areas=[item.agent_name for item in tasks],
         )

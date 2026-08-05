@@ -1,77 +1,97 @@
-from ipo_financial_agent.models_agent import Evidence, Finding, IndustryAnalysis
-from ipo_financial_agent.rendering import render_investment_markdown
+from ipo_financial_agent.models_agent import (
+    DiligenceQuestion,
+    DueDiligenceConclusion,
+    Evidence,
+    Finding,
+)
+from ipo_financial_agent.rendering import render_due_diligence_markdown
 
 
-def test_markdown_separates_grounded_facts_and_open_questions() -> None:
+def test_markdown_renders_mainline_a_conclusion_and_follow_up() -> None:
     evidence = Evidence(
         source_type="prospectus",
         source_file="prospectus.pdf",
         page_number=78,
-        title="行业排名",
-        content="公司按收入计排名第一。",
+        title="Business model",
+        content="The company sells industrial printing control systems.",
     )
     finding = Finding(
-        agent_name="market_valuation",
-        question="公司的行业地位如何？",
-        conclusion="公司在独立打印控制系统供应商中排名第一。",
+        agent_name="company_business",
+        question="What does the company sell?",
+        conclusion="The company sells industrial printing control systems.",
         evidence_ids=[evidence.evidence_id],
         evidence_strength="strong",
     )
+    question = DiligenceQuestion(
+        priority="P1",
+        category="company_business",
+        question="Provide top-five customer retention data.",
+        rationale="Customer durability is not yet verified.",
+        requested_materials=["customer retention schedule"],
+        downside_if_unresolved="Future earning power may be overstated.",
+    )
 
-    report = render_investment_markdown(
+    report = render_due_diligence_markdown(
         {
-            "company": "汉森软件",
+            "company": "Example Holdings",
             "research_evidence": [evidence],
             "research_findings": [finding],
-            "open_questions": ["发行价格仍为[编纂]。"],
-            "challenges": [],
+            "diligence_questions": [question],
+            "due_diligence_conclusion": DueDiligenceConclusion(
+                verdict="conditional_proceed",
+                historical_financial_quality="moderate",
+                future_earning_power="weak",
+                material_risk_level="Medium",
+            ),
             "metrics": [],
-            "industry_analysis": IndustryAnalysis(),
+            "challenges": [],
         }
     )
 
-    assert "# 汉森软件港股 IPO 尽调与投资研究报告" in report
+    assert "# Example Holdings港股 IPO 公司尽调报告" in report
     assert f"{evidence.evidence_id} | 招股书 P78" in report
-    assert "发行价格仍为[编纂]。" in report
-    assert "不推算虚假估值" in report
+    assert "## 九、P0/P1/P2 补充尽调清单" in report
+    assert "Provide top-five customer retention data." in report
+    assert "投资金额、估值上限或退出建议" in report
 
 
-def test_markdown_does_not_invent_industry_facts_without_evidence() -> None:
-    report = render_investment_markdown(
+def test_markdown_does_not_invent_industry_facts_without_external_evidence() -> None:
+    report = render_due_diligence_markdown(
         {
-            "company": "汉森软件",
+            "company": "Example Holdings",
             "research_evidence": [],
             "research_findings": [],
-            "open_questions": [],
-            "challenges": [],
+            "diligence_questions": [],
             "metrics": [],
+            "challenges": [],
         }
     )
 
-    assert "外部检索尚未提供可引用证据" in report
+    assert "尚无招股书之外的行业证据" in report
     assert "行业保持稳定增长" not in report
 
 
-def test_financial_anomaly_is_not_repeated_as_investment_thesis() -> None:
+def test_financial_anomaly_is_not_rendered_as_company_strength() -> None:
     evidence = Evidence(source_type="calculation", source="metric", content="0.59")
     finding = Finding(
         agent_name="financial_dd",
-        question="净现比是否偏低？",
-        conclusion="净现比下降至0.59。",
+        question="Is cash conversion weak?",
+        conclusion="Cash conversion declined to 0.59.",
         evidence_ids=[evidence.evidence_id],
+        risks=["weak cash conversion"],
     )
-    report = render_investment_markdown(
+    report = render_due_diligence_markdown(
         {
-            "company": "汉森软件",
+            "company": "Example Holdings",
             "research_evidence": [evidence],
             "research_findings": [finding],
-            "open_questions": [],
-            "challenges": [],
+            "diligence_questions": [],
             "metrics": [],
+            "challenges": [],
         }
     )
 
-    investment_section = report.split("## 五、投资逻辑", 1)[1].split(
-        "## 六、风险与反证", 1
+    conclusion_section = report.split("## 八、综合尽调判断", 1)[1].split(
+        "## 九、P0/P1/P2 补充尽调清单", 1
     )[0]
-    assert "净现比下降至0.59" not in investment_section
+    assert "Cash conversion declined to 0.59." not in conclusion_section

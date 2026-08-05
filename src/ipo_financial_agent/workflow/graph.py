@@ -51,6 +51,8 @@ class IPOAnalysisState(TypedDict, total=False):
     open_questions: Annotated[list, operator.add]
     challenges: list
     followup_round: int
+    diligence_questions: list[Any]
+    due_diligence_conclusion: Any
 
     # --- Financial Analyst Agent outputs (Tool-Augmented, single node) ---
     raw_statements: list[Any]  # from extraction tool
@@ -64,6 +66,7 @@ class IPOAnalysisState(TypedDict, total=False):
     # --- parallel agent outputs ---
     prospectus_analysis: Any  # ProspectusAnalysis
     industry_analysis: Any  # IndustryAnalysis
+    legal_governance_analysis: Any  # LegalGovernanceAnalysis
 
     # --- fan-in + final ---
     risk_review: Any  # RiskReview
@@ -78,9 +81,11 @@ ORDERED_NODES = [
     "run_financial_agent",  # single Tool-Augmented Agent node
     "run_prospectus_agent",
     "run_industry_agent",
+    "run_legal_governance_agent",
     "run_risk_reviewer",
     "run_skeptic",
     "run_targeted_followup",
+    "run_due_diligence_lead",
     "run_report_writer",
     "export_outputs",
 ]
@@ -151,28 +156,31 @@ def build_graph(nodes: dict[str, Any]):
     graph.add_edge("research_manager", "run_financial_agent")
     graph.add_edge("research_manager", "run_prospectus_agent")
     graph.add_edge("research_manager", "run_industry_agent")
+    graph.add_edge("research_manager", "run_legal_governance_agent")
 
     # Fan-in: 3 branches -> risk_reviewer (Investment Committee)
     graph.add_edge("run_financial_agent", "run_risk_reviewer")
     graph.add_edge("run_prospectus_agent", "run_risk_reviewer")
     graph.add_edge("run_industry_agent", "run_risk_reviewer")
+    graph.add_edge("run_legal_governance_agent", "run_risk_reviewer")
 
     graph.add_edge("run_risk_reviewer", "run_skeptic")
 
     def route_after_skeptic(state: IPOAnalysisState) -> str:
         if state.get("challenges") and state.get("followup_round", 0) < 1:
             return "run_targeted_followup"
-        return "run_report_writer"
+        return "run_due_diligence_lead"
 
     graph.add_conditional_edges(
         "run_skeptic",
         route_after_skeptic,
         {
             "run_targeted_followup": "run_targeted_followup",
-            "run_report_writer": "run_report_writer",
+            "run_due_diligence_lead": "run_due_diligence_lead",
         },
     )
-    graph.add_edge("run_targeted_followup", "run_report_writer")
+    graph.add_edge("run_targeted_followup", "run_due_diligence_lead")
+    graph.add_edge("run_due_diligence_lead", "run_report_writer")
     graph.add_edge("run_report_writer", "export_outputs")
     graph.add_edge("export_outputs", END)
 
