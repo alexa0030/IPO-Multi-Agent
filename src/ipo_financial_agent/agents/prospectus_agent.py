@@ -49,11 +49,22 @@ _BUSINESS_KEYWORDS = [
     "MANAGEMENT",
 ]
 
-_MAX_CONTEXT_CHARS = 12000
+_MAX_CONTEXT_CHARS = 36000
 
 _PAGE_TOPICS: dict[str, tuple[list[str], int]] = {
     "summary": (["概要", "我们是", "我们主要提供", "本集团是"], 4),
-    "business": (["业务模式", "我们的解决方案", "主要产品", "客户", "供应商"], 10),
+    "business": (
+        [
+            "业务模式",
+            "我们的解决方案",
+            "主要产品",
+            "产品组合包括",
+            "前五大客户",
+            "前五大供应商",
+            "销售与市场营销",
+        ],
+        16,
+    ),
     "governance": (["历史、发展及公司架构", "董事及高级管理层", "控股股东"], 5),
     "risk": (["风险因素"], 4),
 }
@@ -181,7 +192,16 @@ class ProspectusAgent:
 
         selected: list[dict[str, Any]] = []
         total_chars = 0
-        for page_num in sorted(chosen):
+        topic_order = {topic: index for index, topic in enumerate(_PAGE_TOPICS)}
+        ranked_pages = sorted(
+            chosen,
+            key=lambda page_num: (
+                topic_order[chosen[page_num][1]],
+                -chosen[page_num][0],
+                page_num,
+            ),
+        )
+        for page_num in ranked_pages:
             if total_chars >= _MAX_CONTEXT_CHARS:
                 break
             text = page_map[page_num]
@@ -192,6 +212,64 @@ class ProspectusAgent:
             )
             total_chars += len(chunk)
         return selected
+
+    @staticmethod
+    def _evidenced_entity(name: str, page_num: int, kind: str) -> ProspectusEntity:
+        return ProspectusEntity(
+            name=name,
+            evidence=[
+                Evidence(
+                    source_type="prospectus",
+                    page=page_num,
+                    source=f"P{page_num}",
+                    detail=f"{kind}: {name}",
+                )
+            ],
+        )
+
+    @classmethod
+    def _extract_masked_counterparties(
+        cls, text: str, page_num: int, kind: str
+    ) -> list[ProspectusEntity]:
+        """Extract anonymised table labels such as Customer A/Supplier A."""
+        label = "客户" if kind == "customer" else "供应商"
+        if f"前五大{label}" not in text:
+            return []
+        names = re.findall(rf"{label}[A-Z一二三四五六七八九十]", text)
+        return [cls._evidenced_entity(name, page_num, kind) for name in dict.fromkeys(names)]
+
+    @classmethod
+    def _extract_product_categories(
+        cls, text: str, page_num: int
+    ) -> list[ProspectusEntity]:
+        """Extract product/service categories from narrative list sentences."""
+        normalized = re.sub(r"\s+", "", text)
+        patterns = [
+            r"主要提供(.{5,160}?)(?:。|我们的解决方案)",
+            r"产品组合包括(.{5,160}?)(?:。|我们的历史)",
+            r"产品及服务（即(.{5,180}?)）",
+        ]
+        candidates: list[str] = []
+        for pattern in patterns:
+            for match in re.finditer(pattern, normalized):
+                value = re.sub(
+                    r"\([ivx]+\)|（[ivx]+）",
+                    "",
+                    match.group(1),
+                    flags=re.IGNORECASE,
+                )
+                candidates.extend(re.split(r"、|，|,|以及", value))
+        cleaned: list[str] = []
+        for value in candidates:
+            value = value.strip("：:；;。.()（）0123456789")
+            if 2 <= len(value) <= 30 and value.count("及") <= 1 and not any(
+                noise in value for noise in ("客户", "需求", "设计", "目前")
+            ):
+                cleaned.append(value)
+        return [
+            cls._evidenced_entity(name, page_num, "product")
+            for name in dict.fromkeys(cleaned)
+        ]
 
     # ==================== Tool 2: Entity Extractor ====================
 
@@ -209,16 +287,22 @@ class ProspectusAgent:
             # Clean up name — remove trailing punctuation, limit length
             name = re.sub(r"[,，。；;。]$", "", name).strip()[:100]
             if section_name in {"customer", "supplier"}:
+                label = "客户" if section_name == "customer" else "供应商"
                 companies = re.findall(
                     r"[\u4e00-\u9fffA-Za-z0-9（）()·]{2,50}"
                     r"(?:股份有限公司|有限责任公司|有限公司|集团|公司)",
                     name,
                 )
-                masked = re.findall(r"(?:客户|供应商)[A-Z一二三四五六七八九十]", name)
+                masked = re.findall(rf"{label}[A-Z一二三四五六七八九十]", name)
                 candidates = companies or masked
                 if not candidates:
                     continue
                 name = candidates[0]
+                if not name.startswith(label) and (
+                    len(name) > 30
+                    or any(prefix in name for prefix in ("由于", "概无", "我们", "一家"))
+                ):
+                    continue
             elif section_name == "product":
                 name = re.split(r"[，。；;]", name, maxsplit=1)[0].strip()
                 if len(name) > 60 or any(
@@ -362,12 +446,19 @@ class ProspectusAgent:
             customers.extend(
                 self._extract_entities(text, _CUSTOMER_PATTERN, page_num, "customer")
             )
+            customers.extend(
+                self._extract_masked_counterparties(text, page_num, "customer")
+            )
             suppliers.extend(
                 self._extract_entities(text, _SUPPLIER_PATTERN, page_num, "supplier")
+            )
+            suppliers.extend(
+                self._extract_masked_counterparties(text, page_num, "supplier")
             )
             products.extend(
                 self._extract_entities(text, _PRODUCT_PATTERN, page_num, "product")
             )
+            products.extend(self._extract_product_categories(text, page_num))
             management.extend(self._extract_management(text, page_num))
 
             # Extract claims
@@ -401,6 +492,11 @@ class ProspectusAgent:
             if not match:
                 continue
             business_text = match.group(1)
+            sales_match = re.search(
+                r"(我们通过.{0,80}?的方式向客户销售.{0,80}?。)", normalized
+            )
+            if sales_match:
+                business_text = f"{business_text}{sales_match.group(1)}"
             bm_evidence = [
                 Evidence(
                     source_type="prospectus",
@@ -410,6 +506,26 @@ class ProspectusAgent:
                 )
             ]
             break
+
+        # Deduplicate entities, retaining the earliest prospectus page for traceability.
+        def deduplicate(items: list[ProspectusEntity]) -> list[ProspectusEntity]:
+            result: dict[str, ProspectusEntity] = {}
+            for item in items:
+                current_page = item.evidence[0].page_number if item.evidence else 10**9
+                previous = result.get(item.name)
+                previous_page = (
+                    previous.evidence[0].page_number
+                    if previous is not None and previous.evidence
+                    else 10**9
+                )
+                if previous is None or current_page < previous_page:
+                    result[item.name] = item
+            return list(result.values())
+
+        customers = deduplicate(customers)
+        suppliers = deduplicate(suppliers)
+        products = deduplicate(products)
+        management = deduplicate(management)
 
         # Deduplicate
         all_claims = list(dict.fromkeys(all_claims))[:10]
