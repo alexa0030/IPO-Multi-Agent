@@ -44,7 +44,7 @@ class RawStatementTable(BaseModel):
     @field_validator("pages")
     @classmethod
     def validate_pages(cls, value: list[int]) -> list[int]:
-        return sorted(set(int(page) for page in value))
+        return sorted({int(page) for page in value})
 
 
 CanonicalTag = Literal[
@@ -147,7 +147,7 @@ class FinancialNote(BaseModel):
     @field_validator("pages")
     @classmethod
     def validate_pages(cls, value: list[int]) -> list[int]:
-        return sorted(set(int(page) for page in value))
+        return sorted({int(page) for page in value})
 
 
 class FinancialExtractionResult(BaseModel):
@@ -181,6 +181,12 @@ class RiskFinding(BaseModel):
     evidence_fact_ids: list[str] = Field(default_factory=list)
     source_pages: list[int] = Field(default_factory=list)
     rule_code: str
+    assessment_status: Literal[
+        "observation", "partially_explained", "unexplained", "contradiction"
+    ] = "observation"
+    possible_explanations: list[str] = Field(default_factory=list)
+    required_evidence: list[str] = Field(default_factory=list)
+    escalation_conditions: list[str] = Field(default_factory=list)
 
 
 class AnalysisResult(BaseModel):

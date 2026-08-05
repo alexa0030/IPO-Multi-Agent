@@ -224,7 +224,12 @@ class RiskReviewerAgent:
         # --- Rule 2: Pricing power / competitive advantage vs gross margin decline ---
         if _has_claim(prospectus_text, "pricing_power"):
             gm_trend = _get_metric_trend(financial_metrics, r"gross_margin|毛利率")
-            if gm_trend and len(gm_trend) >= 2 and gm_trend[-1] < gm_trend[0]:
+            if (
+                gm_trend
+                and len(gm_trend) >= 2
+                and gm_trend[-1] < gm_trend[0]
+                and (gm_trend[-1] < 0.30 or gm_trend[0] - gm_trend[-1] >= 0.05)
+            ):
                 contradictions.append(
                     Contradiction(
                         type="contradiction",
@@ -343,10 +348,11 @@ class RiskReviewerAgent:
         for r in fin_risks:
             severity = r.get("severity", "medium")
             impact = self._severity_to_level(severity)
+            is_observation = r.get("assessment_status") == "observation"
             # If trend data exists (multiple periods), probability is higher
-            probability = "Medium"
+            probability = "Low" if is_observation else "Medium"
             desc = r.get("description", "")
-            if any(
+            if not is_observation and any(
                 kw in desc for kw in ["连续", "持续", "三年", "declining", "persistent"]
             ):
                 probability = "High"
@@ -354,7 +360,9 @@ class RiskReviewerAgent:
             matrix.append(
                 RiskMatrixItem(
                     risk_name=r.get("title", "Unknown"),
-                    category="financial",
+                    category=(
+                        "financial_observation" if is_observation else "financial"
+                    ),
                     probability=probability,
                     impact=impact,
                     score=self._calc_score(probability, impact),
@@ -479,11 +487,9 @@ class RiskReviewerAgent:
         """Determine overall risk level from matrix and contradictions."""
         high_count = sum(1 for r in risk_matrix if r.score >= 6)
         critical_contradictions = sum(1 for c in contradictions if c.severity == "high")
-        total_risks = len(risk_matrix)
-
-        if high_count >= 3 or critical_contradictions >= 2 or total_risks >= 8:
+        if high_count >= 3 or critical_contradictions >= 2:
             return "High"
-        elif high_count >= 1 or critical_contradictions >= 1 or total_risks >= 4:
+        elif high_count >= 1 or critical_contradictions >= 1:
             return "Medium"
         else:
             return "Low"
@@ -540,6 +546,9 @@ class RiskReviewerAgent:
                 "title": getattr(r, "title", str(r)),
                 "severity": getattr(r, "severity", ""),
                 "description": getattr(r, "description", "")[:150],
+                "assessment_status": getattr(r, "assessment_status", "observation"),
+                "possible_explanations": getattr(r, "possible_explanations", []),
+                "required_evidence": getattr(r, "required_evidence", []),
             }
             for r in risks[:10]
         ]
