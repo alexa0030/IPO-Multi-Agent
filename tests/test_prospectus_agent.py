@@ -75,3 +75,22 @@ def test_offline_analysis_extracts_product_categories_and_masked_counterparties(
     assert next(item for item in result.customers if item.name == "客户A").evidence[
         0
     ].page_number == 140
+
+
+def test_company_dossier_is_universal_and_detects_industry_and_company_signals() -> None:
+    pages = [
+        PageData(source_file="x.pdf", page=30, text="历史、发展及公司架构 控股股东及实际控制人", tables=[]),
+        PageData(source_file="x.pdf", page=50, text="公司完成一项收购并确认业务合并，交易不构成关联交易", tables=[]),
+        PageData(source_file="x.pdf", page=80, text="主要产品采用直销模式，按照合同交付及验收后结算", tables=[]),
+        PageData(source_file="x.pdf", page=90, text="前五大客户及前五大供应商，第一大客户收入占比较高", tables=[]),
+        PageData(source_file="x.pdf", page=100, text="生产线产能、产量、销量、良率及主要原材料情况", tables=[]),
+        PageData(source_file="x.pdf", page=110, text="主要附属公司及董事及高级管理层", tables=[]),
+    ]
+
+    result = ProspectusAgent().analyze(company="任意制造企业", pages=pages)
+
+    assert "manufacturing" in result.dossier.industry_profiles
+    assert "acquisition_or_disposal" in result.dossier.company_specific_signals
+    assert "customer_concentration" in result.dossier.company_specific_signals
+    assert result.dossier.coverage_gaps == []
+    assert result.dossier.topic_page_map["capital_events"] == [50]

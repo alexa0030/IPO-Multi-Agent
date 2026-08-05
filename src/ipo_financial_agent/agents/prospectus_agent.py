@@ -18,6 +18,7 @@ from typing import Any
 from ipo_financial_agent.llm.client import OpenAICompatibleClient
 from ipo_financial_agent.llm.prompts_agents import PROSPECTUS_ANALYSIS_SYSTEM_PROMPT
 from ipo_financial_agent.models_agent import (
+    CompanyBusinessDossier,
     Evidence,
     ProspectusAnalysis,
     ProspectusEntity,
@@ -49,24 +50,72 @@ _BUSINESS_KEYWORDS = [
     "MANAGEMENT",
 ]
 
-_MAX_CONTEXT_CHARS = 36000
+_MAX_CONTEXT_CHARS = 80000
 
 _PAGE_TOPICS: dict[str, tuple[list[str], int]] = {
     "summary": (["概要", "我们是", "我们主要提供", "本集团是"], 4),
-    "business": (
+    "history_ownership": (
+        ["历史、发展及公司架构", "公司历史", "控股股东", "实际控制人", "一致行动", "主要股东"],
+        8,
+    ),
+    "capital_events": (
+        ["收购", "出售", "并购", "重组", "融资", "增资", "股份转让", "业绩承诺", "对赌", "商誉"],
+        8,
+    ),
+    "products_business_model": (
         [
             "业务模式",
             "我们的解决方案",
             "主要产品",
             "产品组合包括",
+            "收入模式",
+            "定价",
+            "销售模式",
+            "交付",
+            "验收",
+            "结算",
+        ],
+        10,
+    ),
+    "customers_suppliers": (
+        [
             "前五大客户",
             "前五大供应商",
-            "销售与市场营销",
+            "客户集中度",
+            "供应商集中度",
+            "信用期",
+            "关联客户",
+            "关联供应商",
         ],
-        16,
+        10,
     ),
-    "governance": (["历史、发展及公司架构", "董事及高级管理层", "控股股东"], 5),
+    "operations": (
+        [
+            "销售与市场营销",
+            "研发", "生产", "产能", "产量", "销量", "利用率", "良率", "在手订单", "雇员",
+        ],
+        10,
+    ),
+    "subsidiaries_management": (["主要附属公司", "子公司", "公司架构", "董事及高级管理层"], 8),
     "risk": (["风险因素"], 4),
+}
+
+_INDUSTRY_PROFILES: dict[str, tuple[str, ...]] = {
+    "manufacturing": ("产能", "产量", "销量", "生产线", "良率", "原材料", "在建工程"),
+    "software_saas": ("SaaS", "订阅", "续费", "软件许可", "实施服务", "研发资本化"),
+    "pharma_healthcare": ("临床", "药品", "疫苗", "注册审批", "商业化", "推广服务"),
+    "consumer_retail": ("门店", "经销商", "复购", "同店", "退货率", "消费者"),
+    "engineering_services": ("在手订单", "合同资产", "完工进度", "项目验收", "质保金"),
+    "platform_internet": ("GMV", "活跃用户", "佣金率", "获客成本", "平台商户"),
+}
+
+_COMPANY_SIGNALS: dict[str, tuple[str, ...]] = {
+    "acquisition_or_disposal": ("收购", "出售", "并购", "业务合并"),
+    "control_change": ("实际控制人变更", "控制权变更", "表决权委托"),
+    "customer_concentration": ("客户集中", "第一大客户", "前五大客户"),
+    "related_party": ("关联交易", "关联方", "关连交易", "关连人士"),
+    "business_transformation": ("业务转型", "终止经营", "剥离", "战略转型"),
+    "capacity_expansion": ("扩产", "新增产能", "在建工程", "生产基地"),
 }
 
 
@@ -212,6 +261,38 @@ class ProspectusAgent:
             )
             total_chars += len(chunk)
         return selected
+
+    @staticmethod
+    def _build_dossier(company: str, pages: list[dict[str, Any]]) -> CompanyBusinessDossier:
+        topic_page_map: dict[str, list[int]] = {}
+        combined = "\n".join(item["text"] for item in pages)
+        for item in pages:
+            topic_page_map.setdefault(item["title"], []).append(item["page"])
+        profile_scores = {
+            name: sum(min(combined.count(keyword), 4) for keyword in keywords)
+            for name, keywords in _INDUSTRY_PROFILES.items()
+        }
+        profiles = [
+            name for name, score in sorted(
+                profile_scores.items(), key=lambda item: (-item[1], item[0])
+            )
+            if score >= 3
+        ][:2]
+        signals = [
+            name for name, keywords in _COMPANY_SIGNALS.items()
+            if any(keyword in combined for keyword in keywords)
+        ]
+        required = {
+            "history_ownership", "capital_events", "products_business_model",
+            "customers_suppliers", "operations", "subsidiaries_management",
+        }
+        return CompanyBusinessDossier(
+            company=company,
+            topic_page_map={key: list(dict.fromkeys(value)) for key, value in topic_page_map.items()},
+            industry_profiles=profiles or ["general"],
+            company_specific_signals=signals,
+            coverage_gaps=sorted(required - set(topic_page_map)),
+        )
 
     @staticmethod
     def _evidenced_entity(name: str, page_num: int, kind: str) -> ProspectusEntity:
@@ -546,6 +627,7 @@ class ProspectusAgent:
 
         return ProspectusAnalysis(
             company=company,
+            dossier=self._build_dossier(company, pages),
             business_model=business_text,
             business_model_evidence=bm_evidence,
             main_products=products[:10],
@@ -687,6 +769,7 @@ class ProspectusAgent:
         # Merge: use LLM text but keep offline evidence
         return ProspectusAnalysis(
             company=company,
+            dossier=offline.dossier,
             business_model=self._extract_section(markdown, "Business Model|商业模式"),
             business_model_evidence=offline.business_model_evidence,
             main_products=offline.main_products,

@@ -331,6 +331,16 @@ class ProspectusEntity(BaseModel):
     evidence: list[Evidence] = Field(default_factory=list)
 
 
+class CompanyBusinessDossier(BaseModel):
+    """Universal company/business DD context before narrative report writing."""
+
+    company: str = ""
+    topic_page_map: dict[str, list[int]] = Field(default_factory=dict)
+    industry_profiles: list[str] = Field(default_factory=list)
+    company_specific_signals: list[str] = Field(default_factory=list)
+    coverage_gaps: list[str] = Field(default_factory=list)
+
+
 class ProspectusAnalysis(BaseModel):
     """Structured output from the Prospectus Analyst Agent.
 
@@ -339,6 +349,7 @@ class ProspectusAnalysis(BaseModel):
     """
 
     company: str = ""
+    dossier: CompanyBusinessDossier = Field(default_factory=CompanyBusinessDossier)
     business_model: str = ""
     business_model_evidence: list[Evidence] = Field(default_factory=list)
 
