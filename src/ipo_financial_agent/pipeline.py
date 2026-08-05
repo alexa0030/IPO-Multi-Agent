@@ -356,6 +356,7 @@ class IPOFinancialPipeline:
         result = agent.analyze(
             company=state["company"],
             business_description=business_desc,
+            pages=state.get("pages", []),
         )
         patch = industry_research_patch(result)
         print(
@@ -391,7 +392,9 @@ class IPOFinancialPipeline:
             "agent_messages": [msg],
         }
 
-    def _run_legal_governance_agent(self, state: dict[str, Any]) -> dict[str, Any]:
+    def _run_legal_governance_agent(
+        self, state: dict[str, Any]
+    ) -> dict[str, Any]:
         result = LegalGovernanceAgent().analyze(
             company=state["company"],
             pages=state.get("pages", []),
@@ -782,7 +785,9 @@ class IPOFinancialPipeline:
                 "due_diligence_verdict": getattr(
                     state.get("due_diligence_conclusion"), "verdict", None
                 ),
-                "diligence_question_count": len(state.get("diligence_questions", [])),
+                "diligence_question_count": len(
+                    state.get("diligence_questions", [])
+                ),
                 # Forensic engine metadata
                 "forensic_findings_json": str(forensic_findings_json),
                 "rule_events_json": str(rule_events_json),
