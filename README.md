@@ -1,116 +1,91 @@
-# IPO Financial Agent
+# HK IPO Due Diligence Agent
 
-面向港股 IPO 招股书的可追溯财务解析与分析项目。项目参考了用户提供的 `Financial-MCP-Agent` 中的 OpenAI-compatible 配置和 LangGraph 工作流思路，但将数据入口从股票 API 改造成招股书 PDF，并把“财务事实库”和“财务知识库”分开保存。
+面向港股 IPO 的证据驱动多 Agent 尽调系统。输入公司名和招股书 PDF，输出带页码引用、计算底稿、风险挑战和未解决问题的 Markdown 投资报告。
 
-## 核心架构
+它不是“让大模型总结 PDF”：财务数字由 Python 提取和计算，Agent 只在证据账本上形成结论；没有真实搜索结果时，系统会保留问题，而不是生成模拟新闻或来源。
 
-```text
-PDF
- └─ pages.json：每页 page + text + raw tables
-        ├─ 原样财务报表抽取 → raw_statements.json / Excel主表
-        └─ 第一次LLM任务：财务资料解析
-                ├─ statement_facts
-                └─ financial_notes
-                        ↓
-              Python指标 + 风险规则
-                        ↓
-              第二次LLM任务：财务分析
-                        ↓
-          Excel底稿 + Markdown报告 + SQLite
+## 为什么做这个项目
+
+港股招股书通常有数百页。投资人员需要同时处理公司业务、财务质量、行业竞争、监管信息和风险反证，并能快速回到原文复核。本项目把这套工作拆成可审计的研究闭环：
+
+1. 保留 PDF 原页和原表；
+2. 专长 Agent 只提交“证据 + 结论 + 待核实问题”；
+3. 投资委员会交叉检查冲突；
+4. Skeptic 选择最多三项关键缺口，触发最多一轮定向补证；
+5. 报告逐条展示证据 ID、页码或 URL。
+
+## 架构
+
+```mermaid
+flowchart LR
+    PDF["招股书 PDF"] --> DP["Document Prepare"]
+    DP --> RM["Research Manager"]
+    RM --> FA["Financial DD Agent"]
+    RM --> PA["Prospectus Agent"]
+    RM --> IA["Industry Agent"]
+    FA --> IC["Investment Committee"]
+    PA --> IC
+    IA --> IC
+    IC --> SK["Skeptic"]
+    SK -->|"关键缺口，最多一轮"| WS["Targeted Web Search"]
+    SK --> RW["Report Writer"]
+    WS --> RW
+    RW --> OUT["Markdown + Excel + JSON + SQLite"]
 ```
 
-“调用一次财务解析模型”是一个逻辑阶段。招股书过长时，程序会按页分批调用同一套 Prompt，并自动合并去重。
+核心数据契约：
 
-## 当前功能
+- `Evidence`：来源类型、原文、PDF 页码或 URL、发布日期、置信度；
+- `Finding`：问题、结论、引用的 Evidence ID、证据强度、风险和待核实项；
+- `Challenge`：Skeptic 发给指定 Agent 的补证请求；
+- `Research Ledger`：全流程追加型证据账本，防止 Agent 无来源地改写事实。
 
-- PyMuPDF 提取逐页文本，pdfplumber 提取逐页原始表格；
-- `pages.json` 保留整页内容，不提前强制拆分标题和段落；
-- 自动定位综合财务状况表、损益表、现金流量表和权益变动表；
-- 三大报表保持原始科目和原始行列，按表输出到 Excel；
-- 每一行、每一条财务事实和每一条附注均保存 PDF 页码；
-- 第一次大模型任务生成财务事实库与重点财务知识库；
-- Python 计算增长率、毛利率、净利率、费用率、净现比、流动比率等；
-- 规则引擎识别应收、存货、现金流、毛利率和偿债风险；
-- 第二次大模型任务生成带页码引用的完整财务分析；
-- LangGraph 串联流程，后续可增加公司、行业、估值、新闻和汇总 Agent；
-- SQLite 保存文档、页面、原始报表、财务事实、附注、指标、风险和分析记录。
+## 已实现能力
 
-## 重点财务资料范围
+- 逐页提取文本和原始表格，保留物理页码；
+- 自动定位三大财务报表和重点业务章节；
+- 统一财务事实标签，但不修改报表原始科目；
+- Python 计算增长率、毛利率、净利率、费用率、现金转换、流动比率等指标；
+- 6 条基础风险规则和 20 条财务法证规则；
+- 公司业务、财务、行业三个研究分支及跨 Agent 冲突检查；
+- Skeptic 挑战路由和单轮定向补证，避免无界 Agent 循环；
+- Tavily 可选联网检索，优先标记港交所、证监会等官方来源；
+- Markdown 投资报告、Excel 财务底稿、JSON 中间产物和 SQLite 存档；
+- OpenAI-compatible 模型接口，支持本地 vLLM；
+- 无模型、无搜索密钥时仍可离线运行，且不伪造外部信息。
 
-包含但不限于：货币资金、存货、应收账款、其他应收款、固定资产、使用权资产、短期贷款/借款、长期借款、合同负债、应付账款、其他应付款、管理费用、研发费用、销售费用、财务费用、财务预测、毛利、毛利率、净利润、流动负债、应收票据和递延收益。
-
-## 安装
+## 快速开始
 
 建议 Python 3.10–3.12。
 
 ```bash
 python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# macOS/Linux
 source .venv/bin/activate
-
 pip install -e .
+cp .env.example .env
 ```
-本地 qwen3-0.6b vLLM 服务推荐命令：
+
+Windows 激活命令为 `.venv\Scripts\activate`。
+
+离线运行：
 
 ```bash
-vllm serve Qwen/Qwen3-0.6B \
-  --host 0.0.0.0 \
-  --port 8000 \
-  --served-model-name qwen3-0.6b \
-  --api-key localtestkey \
-  --max-model-len 32768 \
-  --gpu-memory-utilization 0.70 \
-  --reasoning-parser qwen3 \
-  --default-chat-template-kwargs '{"enable_thinking": false}'
+python main.py \
+  --pdf "data/uploads/prospectus.pdf" \
+  --company "深圳市汉森软件股份有限公司" \
+  --llm-mode off
 ```
 
-`vllm serve` 本身就是 OpenAI 兼容服务，不需要 `--openai` 参数。模型名称或模型路径直接放在 `serve` 后面。
-配置大模型：
-
-```bash
-copy .env.example .env
-```
-
-`.env`：
+配置 OpenAI-compatible 模型后，将 `--llm-mode` 改为 `auto` 或 `on`：
 
 ```env
-OPENAI_COMPATIBLE_API_KEY=localtestkey
+OPENAI_COMPATIBLE_API_KEY=your_key
 OPENAI_COMPATIBLE_BASE_URL=http://127.0.0.1:8000/v1
-OPENAI_COMPATIBLE_MODEL=qwen3-0.6b
-
-LLM_TEMPERATURE=0.3
-LLM_TIMEOUT_SECONDS=300
-LLM_MAX_RETRIES=2
-PARSE_CHUNK_MAX_CHARS=12000
-PARSE_CHUNK_OVERLAP_PAGES=1
-CANDIDATE_CONTEXT_PAGES=1
+OPENAI_COMPATIBLE_MODEL=your_model
+TAVILY_API_KEY=your_tavily_key
 ```
 
-本地 vLLM（Qwen3-0.6B）推荐在 Linux/WSL2 中运行。Windows Python 可以访问 WSL 中的 `8000` 端口，但 vLLM 服务端需在 Linux 里启动。
-
-支持 OpenAI 兼容接口。`BASE_URL` 为空时使用 OpenAI 默认地址。
-
-## 运行
-
-完整两阶段大模型流程：
-
-```bash
-python main.py --pdf "data/uploads/招股书.pdf" --company "某公司" --llm-mode on
-```
-
-自动模式，有模型配置就调用，没有则只做离线抽取：
-
-```bash
-python main.py --pdf "data/uploads/招股书.pdf" --company "某公司" --llm-mode auto
-```
-
-不调用大模型：
-
-```bash
-python main.py --pdf "data/uploads/招股书.pdf" --company "某公司" --llm-mode off
-```
+`auto` 在模型可用时调用模型，否则安全降级；`on` 在配置缺失时直接报错；`off` 不调用模型。
 
 ## 输出
 
@@ -120,53 +95,47 @@ data/extracted/<document_id>/
 ├── raw_statements.json
 ├── financial_kb.json
 ├── metrics.json
-├── risk_findings.json
+├── forensic_findings.json
+├── research_ledger.json
+├── agent_messages.json
 └── run_summary.json
 
 data/output/
-├── <document_id>_financial_workbook.xlsx
-└── <document_id>_financial_report.md
-
-data/db/
-└── ipo_financial_agent.sqlite3
+├── <document_id>_ipo_research_report.md
+├── <document_id>_financial_report.md
+└── <document_id>_financial_workbook.xlsx
 ```
 
-Excel 包含：
+最终 Markdown 覆盖项目摘要、公司与股权、业务产品、行业竞争、财务表现、投资逻辑、风险、Skeptic Challenges 和证据索引。投资结论与未解决问题分开呈现。
 
-- 目录；
-- 原样财务报表，每张表独立 Sheet；
-- 财务事实明细；
-- 重点财务资料；
-- 财务指标；
-- 风险事项；
-- 证据索引。
+## 可复现实例
 
-## 数据可信度设计
+在一份 504 页港股申请版本上，以离线模式完成端到端回归：提取 13 张报表、468 条财务事实、29 个指标，执行 20 条法证规则并生成带页码证据的 Markdown 报告。该数字是当前样本文档的回归结果，不代表所有 PDF 的通用准确率。
 
-- `pages.json` 是唯一原始中间底稿；
-- 三大报表展示层不修改原始科目；
-- `canonical_tag` 仅用于计算，不替换原文；
-- 页码从 PDF 物理页码直接读取，从 1 开始；
-- LLM 输出中的页码必须属于当前输入页，否则程序会丢弃该记录；
-- 指标由 Python 计算，不让模型自行运算；
-- 规则命中只是分析线索，不直接当成确定性风险；
-- 无 LLM 模式的事实候选置信度较低，不建议直接用于正式报告。
+运行测试：
 
-## 后续扩展 Agent
+```bash
+python -m pytest -q
+```
 
-在 `src/ipo_financial_agent/agents/` 中增加新的 Agent，并在 `workflow/graph.py` 注册节点即可。推荐顺序：
+当前测试覆盖证据校验、页面选择、财务指标、法证规则、报告渲染、搜索完整性和 Skeptic 路由。
 
-1. Company Agent：公司、股权、管理层、子公司；
-2. Business Agent：业务结构、产品、客户、供应商；
-3. Industry Agent：行业空间、竞争格局、政策；
-4. Market Agent：上市后股价、估值、异常波动；
-5. News/Risk Agent：舆情和上市后风险预警；
-6. Summary Agent：跨模块汇总与冲突校验。
+## 可信度与边界
 
-## 已知边界
+- `pages.json` 是原始中间底稿，Excel 主表保留原始科目；
+- PDF 证据必须引用实际输入页，外部证据必须有真实 URL；
+- 财务指标由确定性代码计算，不交给模型心算；
+- 规则命中是调查线索，不等同于审计结论；
+- 扫描版 PDF 需要先 OCR，复杂无框表仍可能需要人工复核；
+- 联网搜索只补充公开信息，不能替代监管、法律和财务专业意见；
+- 正式投资决策前必须由分析师复核关键数字、口径、期间和引用。
 
-- 扫描版 PDF 需要先 OCR；
-- pdfplumber 对无框表、复杂合并单元格和多栏排版可能错位；
-- 大模型解析是高质量候选抽取，不是审计意见；
-- 合并范围变化、收购子公司、非完整期间和单位变化必须人工复核；
-- 生产环境应增加人工审核、版本修订、数据勾稽和模型评测集。
+## Roadmap
+
+- 招股书 OCR 与版面模型回退；
+- 港交所公告、证监会、公司注册处等官方数据源适配器；
+- 可复现的多公司评测集和引用准确率指标；
+- 人工审核、批注和报告版本差异；
+- 估值可比公司与情景分析模块。
+
+更多设计说明见 `docs/architecture.md` 和 `docs/competition_and_resume.md`。
