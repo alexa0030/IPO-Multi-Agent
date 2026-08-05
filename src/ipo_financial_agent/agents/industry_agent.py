@@ -38,7 +38,15 @@ class IndustryAgent:
                 content=result.get("content", ""),
                 source=result.get("url", ""),
                 source_url=result.get("url") or None,
-                confidence=0.6,
+                published_at=result.get("published_at"),
+                retrieved_at=result.get("retrieved_at"),
+                confidence=float(result.get("confidence", 0.5)),
+                metadata={
+                    "topic": result.get("topic", "industry"),
+                    "source_tier": result.get("source_tier", "unknown"),
+                    "publisher": result.get("publisher", ""),
+                    "query": result.get("query", ""),
+                },
             )
             for result in search_results
             if result.get("url") and result.get("content")
