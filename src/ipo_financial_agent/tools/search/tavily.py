@@ -45,9 +45,9 @@ class TavilySearchProvider:
                         content=item.get("content", ""),
                         url=item.get("url", ""),
                         published_at=item.get("published_date"),
-                        provider="tavily",
                     )
                 )
             except ValueError:
                 continue
         return output
+

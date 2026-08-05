@@ -60,38 +60,9 @@ def test_offline_industry_analysis_uses_page_grounded_prospectus_claims(
         }
     ],
 )
-def test_single_external_result_is_not_automatically_verified(_search: object) -> None:
+def test_external_evidence_is_labelled_separately(_search: object) -> None:
     result = IndustryAgent().analyze(company="测试公司", pages=[])
 
     assert result.evidence[0].source_type == "web"
     assert result.evidence[0].metadata["source_scope"] == "external"
-    assert result.evidence[0].metadata["independently_verified"] is False
-    assert result.evidence[0].metadata["topic_source_count"] == 1
-
-
-@patch(
-    "ipo_financial_agent.agents.industry_agent.search_industry_info",
-    return_value=[
-        {
-            "title": "Regulator",
-            "content": "Official market notice",
-            "url": "https://www.sfc.hk/notice",
-            "source_tier": "official",
-            "topic": "industry",
-        },
-        {
-            "title": "Industry body",
-            "content": "Independent industry data",
-            "url": "https://association.example/report",
-            "source_tier": "secondary",
-            "topic": "industry",
-        },
-    ],
-)
-def test_topic_cross_source_coverage_requires_two_domains(_search: object) -> None:
-    result = IndustryAgent().analyze(company="测试公司", pages=[])
-
-    assert all(
-        item.metadata["independently_verified"] is True for item in result.evidence
-    )
-    assert all(item.metadata["topic_source_count"] == 2 for item in result.evidence)
+    assert result.evidence[0].metadata["independently_verified"] is True

@@ -21,7 +21,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8,<9", "ruff>=0.6,<1"]
 ui = ["streamlit>=1.37,<2"]
-search = ["ddgs>=9,<10"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
