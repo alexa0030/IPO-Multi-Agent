@@ -23,6 +23,9 @@ EvidenceSourceType = Literal[
 ]
 EvidenceStrength = Literal["strong", "medium", "weak"]
 ResearchPriority = Literal["high", "medium", "low", "normal"]
+DiligencePriority = Literal["P0", "P1", "P2"]
+DiligenceVerdict = Literal["proceed", "conditional_proceed", "pause", "stop"]
+AssessmentGrade = Literal["strong", "moderate", "weak", "insufficient_evidence"]
 
 
 # ==================== Agent Messaging (Event Bus) ====================
@@ -209,8 +212,58 @@ class Challenge(BaseModel):
         return self
 
 
+class DiligenceQuestion(BaseModel):
+    """A prioritized, actionable request for follow-up due diligence."""
+
+    question_id: str = ""
+    priority: DiligencePriority
+    category: Literal[
+        "company_business",
+        "financial",
+        "industry_competition",
+        "legal_governance",
+        "other",
+    ]
+    question: str
+    rationale: str
+    current_evidence_ids: list[str] = Field(default_factory=list)
+    requested_materials: list[str] = Field(default_factory=list)
+    downside_if_unresolved: str = ""
+    status: Literal["open", "answered", "waived"] = "open"
+
+    @model_validator(mode="after")
+    def identify_and_deduplicate(self) -> Self:
+        self.current_evidence_ids = list(dict.fromkeys(self.current_evidence_ids))
+        self.requested_materials = list(dict.fromkeys(self.requested_materials))
+        if not self.question_id:
+            payload = f"{self.priority}|{self.category}|{self.question}".encode()
+            self.question_id = f"ddq_{hashlib.sha1(payload).hexdigest()[:12]}"
+        return self
+
+
+class DueDiligenceConclusion(BaseModel):
+    """Final Mainline A conclusion; not an investment sizing decision."""
+
+    verdict: DiligenceVerdict
+    historical_financial_quality: AssessmentGrade = "insufficient_evidence"
+    future_earning_power: AssessmentGrade = "insufficient_evidence"
+    material_risk_level: RiskLevel = "Medium"
+    company_profile: str = ""
+    key_strengths: list[str] = Field(default_factory=list)
+    key_risks: list[str] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+    follow_up_question_ids: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=0.0, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def deduplicate_references(self) -> Self:
+        self.evidence_ids = list(dict.fromkeys(self.evidence_ids))
+        self.follow_up_question_ids = list(dict.fromkeys(self.follow_up_question_ids))
+        return self
+
+
 class InvestmentDecision(BaseModel):
-    """Committee output; it may cite ledger evidence but cannot create facts."""
+    """Deprecated compatibility model for pre-Mainline-A artifacts."""
 
     recommendation: Literal[
         "recommend",
@@ -267,7 +320,7 @@ class ProspectusEntity(BaseModel):
     """A structured entity extracted from the prospectus (customer, supplier, product, etc.)."""
 
     name: str = ""
-    detail: str = ""           # e.g. "revenue_ratio: 35%", "role: Chairman"
+    detail: str = ""  # e.g. "revenue_ratio: 35%", "role: Chairman"
     evidence: list[Evidence] = Field(default_factory=list)
 
 
@@ -311,6 +364,21 @@ class IndustryAnalysis(BaseModel):
     raw_markdown: str = ""
 
 
+class LegalGovernanceAnalysis(BaseModel):
+    """Structured legal, compliance, governance, and adverse-information review."""
+
+    company: str = ""
+    special_shareholder_rights: list[str] = Field(default_factory=list)
+    related_party_matters: list[str] = Field(default_factory=list)
+    controller_and_ownership_risks: list[str] = Field(default_factory=list)
+    litigation_and_penalties: list[str] = Field(default_factory=list)
+    licensing_ip_data_risks: list[str] = Field(default_factory=list)
+    adverse_information: list[str] = Field(default_factory=list)
+    evidence: list[Evidence] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
+    raw_markdown: str = ""
+
+
 # ==================== Investment Committee Artifacts ====================
 
 
@@ -322,13 +390,13 @@ class Contradiction(BaseModel):
     - Prospectus claims "market leader" but Industry shows no top-3 ranking
     """
 
-    type: str = "contradiction"          # contradiction / inconsistency / red_flag
-    source_1: str = ""                    # e.g. "ProspectusAgent"
-    statement_1: str = ""                 # e.g. "strong pricing power"
-    source_2: str = ""                    # e.g. "FinancialAgent"
-    statement_2: str = ""                 # e.g. "gross margin declining 3 years"
-    severity: str = "warning"             # info / warning / high
-    question: str = ""                    # follow-up question for the company
+    type: str = "contradiction"  # contradiction / inconsistency / red_flag
+    source_1: str = ""  # e.g. "ProspectusAgent"
+    statement_1: str = ""  # e.g. "strong pricing power"
+    source_2: str = ""  # e.g. "FinancialAgent"
+    statement_2: str = ""  # e.g. "gross margin declining 3 years"
+    severity: str = "warning"  # info / warning / high
+    question: str = ""  # follow-up question for the company
 
 
 class RiskMatrixItem(BaseModel):
@@ -338,11 +406,13 @@ class RiskMatrixItem(BaseModel):
     """
 
     risk_name: str = ""
-    category: str = ""                    # financial / business / industry / governance
-    probability: RiskLevel = "Medium"     # likelihood of materializing
-    impact: RiskLevel = "Medium"          # severity if it materializes
-    score: int = 4                        # 1-9, probability_rank * impact_rank
-    evidence_refs: list[str] = Field(default_factory=list)  # rule_ids or finding references
+    category: str = ""  # financial / business / industry / governance
+    probability: RiskLevel = "Medium"  # likelihood of materializing
+    impact: RiskLevel = "Medium"  # severity if it materializes
+    score: int = 4  # 1-9, probability_rank * impact_rank
+    evidence_refs: list[str] = Field(
+        default_factory=list
+    )  # rule_ids or finding references
 
 
 class RiskReview(BaseModel):
