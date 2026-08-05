@@ -23,6 +23,7 @@ Key architectural principle:
   - financial_findings + rule_trigger_events expose forensic results to
     downstream Agents (Investment Committee, Report Writer).
 """
+
 from __future__ import annotations
 
 import operator
@@ -43,29 +44,30 @@ class IPOAnalysisState(TypedDict, total=False):
     topic_page_groups: dict[str, list[Any]]
 
     # --- research plan (set by research_manager) ---
-    research_plan: Any          # ResearchPlan
+    research_plan: Any  # ResearchPlan
     agent_messages: Annotated[list, operator.add]  # auto-merge from parallel branches
     research_evidence: Annotated[list, operator.add]
     research_findings: Annotated[list, operator.add]
     open_questions: Annotated[list, operator.add]
-    challenges: Annotated[list, operator.add]
+    challenges: list
+    followup_round: int
 
     # --- Financial Analyst Agent outputs (Tool-Augmented, single node) ---
-    raw_statements: list[Any]       # from extraction tool
-    extraction_result: Any          # FinancialExtractionResult (facts + notes)
-    metrics: list[Any]              # from metric engine tool
-    risks: list[Any]                # from 6-rule risk engine tool
-    financial_findings: list[Any]   # from 20-rule forensic engine tool
+    raw_statements: list[Any]  # from extraction tool
+    extraction_result: Any  # FinancialExtractionResult (facts + notes)
+    metrics: list[Any]  # from metric engine tool
+    risks: list[Any]  # from 6-rule risk engine tool
+    financial_findings: list[Any]  # from 20-rule forensic engine tool
     rule_trigger_events: list[Any]  # subset of findings where triggered=True
-    analysis: Any                   # AnalysisResult (LLM reasoning / offline summary)
+    analysis: Any  # AnalysisResult (LLM reasoning / offline summary)
 
     # --- parallel agent outputs ---
-    prospectus_analysis: Any    # ProspectusAnalysis
-    industry_analysis: Any      # IndustryAnalysis
+    prospectus_analysis: Any  # ProspectusAnalysis
+    industry_analysis: Any  # IndustryAnalysis
 
     # --- fan-in + final ---
-    risk_review: Any            # RiskReview
-    final_report: str           # final markdown report
+    risk_review: Any  # RiskReview
+    final_report: str  # final markdown report
     artifacts: Any
 
 
@@ -73,10 +75,12 @@ class IPOAnalysisState(TypedDict, total=False):
 ORDERED_NODES = [
     "document_prepare",
     "research_manager",
-    "run_financial_agent",       # single Tool-Augmented Agent node
+    "run_financial_agent",  # single Tool-Augmented Agent node
     "run_prospectus_agent",
     "run_industry_agent",
     "run_risk_reviewer",
+    "run_skeptic",
+    "run_targeted_followup",
     "run_report_writer",
     "export_outputs",
 ]
@@ -92,8 +96,10 @@ class _SequentialFallback:
         current = dict(state)
         if "agent_messages" not in current:
             current["agent_messages"] = []
-        for key in ("research_evidence", "research_findings", "open_questions", "challenges"):
+        for key in ("research_evidence", "research_findings", "open_questions"):
             current.setdefault(key, [])
+        current.setdefault("challenges", [])
+        current.setdefault("followup_round", 0)
         for name in ORDERED_NODES:
             node_fn = self.nodes.get(name)
             if node_fn is None:
@@ -105,7 +111,6 @@ class _SequentialFallback:
                 "research_evidence",
                 "research_findings",
                 "open_questions",
-                "challenges",
             ):
                 if key in update:
                     existing = current.get(key, [])
@@ -152,8 +157,22 @@ def build_graph(nodes: dict[str, Any]):
     graph.add_edge("run_prospectus_agent", "run_risk_reviewer")
     graph.add_edge("run_industry_agent", "run_risk_reviewer")
 
-    # Final sequence
-    graph.add_edge("run_risk_reviewer", "run_report_writer")
+    graph.add_edge("run_risk_reviewer", "run_skeptic")
+
+    def route_after_skeptic(state: IPOAnalysisState) -> str:
+        if state.get("challenges") and state.get("followup_round", 0) < 1:
+            return "run_targeted_followup"
+        return "run_report_writer"
+
+    graph.add_conditional_edges(
+        "run_skeptic",
+        route_after_skeptic,
+        {
+            "run_targeted_followup": "run_targeted_followup",
+            "run_report_writer": "run_report_writer",
+        },
+    )
+    graph.add_edge("run_targeted_followup", "run_report_writer")
     graph.add_edge("run_report_writer", "export_outputs")
     graph.add_edge("export_outputs", END)
 

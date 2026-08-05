@@ -6,32 +6,33 @@ from pathlib import Path
 from typing import Any
 
 from ipo_financial_agent.agents.financial_agent import FinancialAnalysisAgent
-from ipo_financial_agent.agents.prospectus_agent import ProspectusAgent
 from ipo_financial_agent.agents.industry_agent import IndustryAgent
-from ipo_financial_agent.agents.risk_reviewer import RiskReviewerAgent
+from ipo_financial_agent.agents.prospectus_agent import ProspectusAgent
 from ipo_financial_agent.agents.research_manager import ResearchManagerAgent
+from ipo_financial_agent.agents.risk_reviewer import RiskReviewerAgent
+from ipo_financial_agent.agents.skeptic import SkepticAgent
 from ipo_financial_agent.config import Settings, get_settings
-from ipo_financial_agent.document.topic_page_selector import TopicPageSelector
 from ipo_financial_agent.document.pdf_loader import PDFLoader
 from ipo_financial_agent.document.section_detector import detect_sections
+from ipo_financial_agent.document.topic_page_selector import TopicPageSelector
 from ipo_financial_agent.llm.client import LLMConfigurationError, OpenAICompatibleClient
 from ipo_financial_agent.models import (
-    AnalysisResult,
     FinancialExtractionResult,
     PipelineArtifacts,
 )
-from ipo_financial_agent.models_agent import AgentMessage
+from ipo_financial_agent.models_agent import AgentMessage, Evidence
 from ipo_financial_agent.output.excel_writer import export_financial_workbook
 from ipo_financial_agent.output.report_writer import write_markdown_report
+from ipo_financial_agent.rendering import render_investment_markdown
 from ipo_financial_agent.research import (
     financial_research_patch,
     industry_research_patch,
     prospectus_research_patch,
 )
-from ipo_financial_agent.rendering import render_investment_markdown
-from ipo_financial_agent.storage.json_store import write_json
 from ipo_financial_agent.storage.evidence_store import EvidenceStore
+from ipo_financial_agent.storage.json_store import write_json
 from ipo_financial_agent.storage.repository import FinancialRepository
+from ipo_financial_agent.tools.search_tool import search_targeted_followup
 from ipo_financial_agent.workflow.graph import build_graph
 
 
@@ -62,6 +63,7 @@ class IPOFinancialPipeline:
                 "research_findings": [],
                 "open_questions": [],
                 "challenges": [],
+                "followup_round": 0,
             }
         )
         return result["artifacts"]
@@ -74,6 +76,8 @@ class IPOFinancialPipeline:
             "run_prospectus_agent": self._run_prospectus_agent,
             "run_industry_agent": self._run_industry_agent,
             "run_risk_reviewer": self._run_risk_reviewer,
+            "run_skeptic": self._run_skeptic,
+            "run_targeted_followup": self._run_targeted_followup,
             "run_report_writer": self._run_report_writer,
             "export_outputs": self._export_outputs,
         }
@@ -213,17 +217,45 @@ class IPOFinancialPipeline:
             ),
             message_type="finding",
             payload={
-                "fact_count": len(result.get("extraction_result", FinancialExtractionResult()).statement_facts),
+                "fact_count": len(
+                    result.get(
+                        "extraction_result", FinancialExtractionResult()
+                    ).statement_facts
+                ),
                 "metric_count": len(result.get("metrics", [])),
                 "risk_alert_count": len(risks),
                 "forensic_finding_count": len(findings),
                 "triggered_count": len(triggered),
                 "triggered_rule_ids": triggered_ids,
                 "categories": {
-                    "asset_quality": len([f for f in findings if getattr(f, "category", "") == "asset_quality"]),
-                    "earnings_quality": len([f for f in findings if getattr(f, "category", "") == "earnings_quality"]),
-                    "capital_structure": len([f for f in findings if getattr(f, "category", "") == "capital_structure"]),
-                    "revenue_authenticity": len([f for f in findings if getattr(f, "category", "") == "revenue_authenticity"]),
+                    "asset_quality": len(
+                        [
+                            f
+                            for f in findings
+                            if getattr(f, "category", "") == "asset_quality"
+                        ]
+                    ),
+                    "earnings_quality": len(
+                        [
+                            f
+                            for f in findings
+                            if getattr(f, "category", "") == "earnings_quality"
+                        ]
+                    ),
+                    "capital_structure": len(
+                        [
+                            f
+                            for f in findings
+                            if getattr(f, "category", "") == "capital_structure"
+                        ]
+                    ),
+                    "revenue_authenticity": len(
+                        [
+                            f
+                            for f in findings
+                            if getattr(f, "category", "") == "revenue_authenticity"
+                        ]
+                    ),
                 },
             },
         )
@@ -231,7 +263,9 @@ class IPOFinancialPipeline:
         return {
             "analysis": analysis,
             "raw_statements": result.get("raw_statements", []),
-            "extraction_result": result.get("extraction_result", FinancialExtractionResult()),
+            "extraction_result": result.get(
+                "extraction_result", FinancialExtractionResult()
+            ),
             "metrics": result.get("metrics", []),
             "risks": risks,
             "financial_findings": findings,
@@ -416,14 +450,68 @@ class IPOFinancialPipeline:
                 "risk_matrix_count": risk_matrix_count,
                 "question_count": len(result.investment_questions),
                 "messages_received": len(agent_messages),
-                "findings_received": len([
-                    m for m in agent_messages
-                    if getattr(m, "message_type", "") == "finding"
-                ]),
+                "findings_received": len(
+                    [
+                        m
+                        for m in agent_messages
+                        if getattr(m, "message_type", "") == "finding"
+                    ]
+                ),
             },
         )
 
         return {"risk_review": result, "agent_messages": [msg]}
+
+    def _run_skeptic(self, state: dict[str, Any]) -> dict[str, Any]:
+        risk_review = state.get("risk_review")
+        challenges = SkepticAgent().review(
+            findings=state.get("research_findings", []),
+            contradictions=list(getattr(risk_review, "contradictions", []) or []),
+            open_questions=state.get("open_questions", []),
+        )
+        print(f"[skeptic] challenges={len(challenges)}", flush=True)
+        return {"challenges": challenges}
+
+    def _run_targeted_followup(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Run at most one scoped web follow-up; never claim an answer offline."""
+        if not state.get("challenges"):
+            return {"followup_round": state.get("followup_round", 0)}
+        evidence: list[Evidence] = []
+        unresolved: list[str] = []
+        for challenge in state.get("challenges", []):
+            if challenge.target_agent != "market_valuation":
+                unresolved.append(challenge.question)
+                continue
+            results = search_targeted_followup(state["company"], challenge.question)
+            for result in results:
+                evidence.append(
+                    Evidence(
+                        source_type="web",
+                        title=result.get("title", ""),
+                        content=result.get("content", ""),
+                        source=result.get("url", ""),
+                        source_url=result.get("url"),
+                        published_at=result.get("published_at"),
+                        retrieved_at=result.get("retrieved_at"),
+                        confidence=float(result.get("confidence", 0.5)),
+                        metadata={
+                            "topic": "targeted_followup",
+                            "challenge_id": challenge.challenge_id,
+                            "source_tier": result.get("source_tier", "unknown"),
+                        },
+                    )
+                )
+            if not results:
+                unresolved.append(challenge.question)
+        print(
+            f"[targeted-followup] round=1, new_evidence={len(evidence)}, "
+            f"unresolved={len(unresolved)}",
+            flush=True,
+        )
+        return {
+            "research_evidence": evidence,
+            "followup_round": 1,
+        }
 
     # ========================
     # Report Writer
@@ -463,13 +551,9 @@ class IPOFinancialPipeline:
         raw_statements_json = write_json(
             artifact_dir / "raw_statements.json", raw_statements
         )
-        financial_kb_json = write_json(
-            artifact_dir / "financial_kb.json", extraction
-        )
+        financial_kb_json = write_json(artifact_dir / "financial_kb.json", extraction)
         metrics_json = write_json(artifact_dir / "metrics.json", metrics)
-        risk_json = write_json(
-            artifact_dir / "risk_findings.json", risks
-        )
+        risk_json = write_json(artifact_dir / "risk_findings.json", risks)
 
         # Multi-Agent outputs
         prospectus_json = write_json(
@@ -508,9 +592,7 @@ class IPOFinancialPipeline:
         forensic_findings_json = write_json(
             artifact_dir / "forensic_findings.json", findings
         )
-        rule_events_json = write_json(
-            artifact_dir / "rule_events.json", rule_events
-        )
+        rule_events_json = write_json(artifact_dir / "rule_events.json", rule_events)
 
         # Excel workbook
         excel_path = self.settings.output_dir / f"{document_id}_financial_workbook.xlsx"
@@ -534,7 +616,9 @@ class IPOFinancialPipeline:
         final_report_path: Path | None = None
         final_report = state.get("final_report", "")
         if final_report:
-            final_report_path = self.settings.output_dir / f"{document_id}_ipo_research_report.md"
+            final_report_path = (
+                self.settings.output_dir / f"{document_id}_ipo_research_report.md"
+            )
             write_markdown_report(final_report_path, final_report)
 
         # Database storage
@@ -560,8 +644,12 @@ class IPOFinancialPipeline:
 
         # Count structured artifacts for metadata
         risk_review = state.get("risk_review")
-        contradiction_count = len(getattr(risk_review, "contradictions", [])) if risk_review else 0
-        risk_matrix_count = len(getattr(risk_review, "risk_matrix", [])) if risk_review else 0
+        contradiction_count = (
+            len(getattr(risk_review, "contradictions", [])) if risk_review else 0
+        )
+        risk_matrix_count = (
+            len(getattr(risk_review, "risk_matrix", [])) if risk_review else 0
+        )
 
         artifacts = PipelineArtifacts(
             document_id=document_id,
@@ -586,36 +674,63 @@ class IPOFinancialPipeline:
                 "prospectus_json": str(prospectus_json),
                 "industry_json": str(industry_json),
                 "risk_review_json": str(risk_review_json),
-                "final_report_path": str(final_report_path) if final_report_path else None,
-                "risk_level": getattr(
-                    state.get("risk_review"), "risk_level", None
-                ),
+                "final_report_path": str(final_report_path)
+                if final_report_path
+                else None,
+                "risk_level": getattr(state.get("risk_review"), "risk_level", None),
                 "research_plan_json": str(research_plan_json),
                 "agent_messages_json": str(agent_messages_json),
                 "agent_message_count": len(state.get("agent_messages", [])),
                 "research_ledger_json": str(research_ledger_json),
-                "research_evidence_count": len(
-                    state.get("research_evidence", [])
-                ),
-                "research_finding_count": len(
-                    state.get("research_findings", [])
-                ),
+                "research_evidence_count": len(state.get("research_evidence", [])),
+                "research_finding_count": len(state.get("research_findings", [])),
                 "open_question_count": len(state.get("open_questions", [])),
+                "challenge_count": len(state.get("challenges", [])),
+                "unresolved_challenge_count": len(state.get("challenges", [])),
+                "followup_round": state.get("followup_round", 0),
                 # Forensic engine metadata
                 "forensic_findings_json": str(forensic_findings_json),
                 "rule_events_json": str(rule_events_json),
                 "forensic_finding_count": len(findings),
                 "forensic_triggered_count": len(rule_events),
                 "forensic_categories": {
-                    "asset_quality": len([f for f in findings if getattr(f, "category", "") == "asset_quality"]),
-                    "earnings_quality": len([f for f in findings if getattr(f, "category", "") == "earnings_quality"]),
-                    "capital_structure": len([f for f in findings if getattr(f, "category", "") == "capital_structure"]),
-                    "revenue_authenticity": len([f for f in findings if getattr(f, "category", "") == "revenue_authenticity"]),
+                    "asset_quality": len(
+                        [
+                            f
+                            for f in findings
+                            if getattr(f, "category", "") == "asset_quality"
+                        ]
+                    ),
+                    "earnings_quality": len(
+                        [
+                            f
+                            for f in findings
+                            if getattr(f, "category", "") == "earnings_quality"
+                        ]
+                    ),
+                    "capital_structure": len(
+                        [
+                            f
+                            for f in findings
+                            if getattr(f, "category", "") == "capital_structure"
+                        ]
+                    ),
+                    "revenue_authenticity": len(
+                        [
+                            f
+                            for f in findings
+                            if getattr(f, "category", "") == "revenue_authenticity"
+                        ]
+                    ),
                 },
                 # Investment Committee metadata
                 "contradiction_count": contradiction_count,
                 "risk_matrix_count": risk_matrix_count,
-                "investment_question_count": len(getattr(risk_review, "investment_questions", [])) if risk_review else 0,
+                "investment_question_count": len(
+                    getattr(risk_review, "investment_questions", [])
+                )
+                if risk_review
+                else 0,
             },
         )
         write_json(artifact_dir / "run_summary.json", artifacts)
