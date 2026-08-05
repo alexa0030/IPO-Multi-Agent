@@ -9,23 +9,21 @@ then performs:
 2. Risk Prioritization Matrix — probability x impact scoring
 3. Investment Question Generation — buy-side due diligence questions
 """
+
 from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, ClassVar
 
 from ipo_financial_agent.llm.client import OpenAICompatibleClient
 from ipo_financial_agent.llm.prompts_agents import RISK_REVIEW_SYSTEM_PROMPT
 from ipo_financial_agent.models_agent import (
     AgentMessage,
     Contradiction,
-    Evidence,
-    FinancialFinding,
     RiskMatrixItem,
     RiskReview,
 )
-
 
 # ==================== Contradiction Detection Rules (offline) ====================
 
@@ -33,7 +31,13 @@ from ipo_financial_agent.models_agent import (
 _CLAIM_KEYWORDS = {
     "growth": ["增长", "高速增长", "快速", "扩张", "growth", "rapid"],
     "leadership": ["领先", "龙头", "第一", "最大", "leader", "leading", "top"],
-    "pricing_power": ["议价能力", "定价权", "竞争优势", "pricing", "competitive advantage"],
+    "pricing_power": [
+        "议价能力",
+        "定价权",
+        "竞争优势",
+        "pricing",
+        "competitive advantage",
+    ],
     "cash_strong": ["资金充裕", "现金流充足", "现金充裕", "strong cash", "solid cash"],
     "customer_diverse": ["客户多元", "客户分散", "diversified customer", "no reliance"],
     "quality": ["高质量", "优质", "稳定", "high quality", "stable"],
@@ -57,7 +61,7 @@ def _get_metric_value(metrics: list, name_pattern: str) -> float | None:
         return None
     for m in metrics:
         name = getattr(m, "metric_name", "") or getattr(m, "name", "") or str(m)
-        if re.search(name_pattern, name, re.I):
+        if re.search(name_pattern, name, re.IGNORECASE):
             val = getattr(m, "value", None)
             if val is None:
                 val = getattr(m, "raw_value", None)
@@ -76,7 +80,7 @@ def _get_metric_trend(metrics: list, name_pattern: str) -> list[float]:
     values = []
     for m in metrics:
         name = getattr(m, "metric_name", "") or getattr(m, "name", "") or str(m)
-        if re.search(name_pattern, name, re.I):
+        if re.search(name_pattern, name, re.IGNORECASE):
             val = getattr(m, "value", None)
             if val is None:
                 val = getattr(m, "raw_value", None)
@@ -86,6 +90,11 @@ def _get_metric_trend(metrics: list, name_pattern: str) -> list[float]:
                 except (ValueError, TypeError):
                     pass
     return values
+
+
+def _format_percent(value: float) -> str:
+    normalized = value * 100 if abs(value) <= 1.5 else value
+    return f"{normalized:.1f}%"
 
 
 class RiskReviewerAgent:
@@ -123,30 +132,49 @@ class RiskReviewerAgent:
 
         if self.client is not None:
             return self._llm_review(
-                company, prospectus_analysis, industry_analysis,
-                financial_markdown, fin_risks, fin_findings, finding_messages,
+                company,
+                prospectus_analysis,
+                industry_analysis,
+                financial_markdown,
+                fin_risks,
+                fin_findings,
+                finding_messages,
             )
 
         # --- Offline mode: real analytical logic ---
         contradictions = self._detect_contradictions(
-            prospectus_text, prospectus_analysis,
-            financial_metrics, fin_findings,
+            prospectus_text,
+            prospectus_analysis,
+            financial_metrics,
+            fin_findings,
             industry_text,
         )
 
-        risk_matrix = self._build_risk_matrix(fin_risks, triggered_findings, contradictions)
+        risk_matrix = self._build_risk_matrix(
+            fin_risks, triggered_findings, contradictions
+        )
 
         investment_questions = self._generate_questions(
-            triggered_findings, contradictions, fin_risks,
+            triggered_findings,
+            contradictions,
+            fin_risks,
         )
 
         risk_level = self._determine_risk_level(risk_matrix, contradictions)
 
-        major_risks = self._extract_major_risks(fin_risks, triggered_findings, contradictions)
+        major_risks = self._extract_major_risks(
+            fin_risks, triggered_findings, contradictions
+        )
 
         markdown = self._build_markdown(
-            company, risk_level, major_risks, contradictions,
-            risk_matrix, investment_questions, fin_risks, triggered_findings,
+            company,
+            risk_level,
+            major_risks,
+            contradictions,
+            risk_matrix,
+            investment_questions,
+            fin_risks,
+            triggered_findings,
         )
 
         return RiskReview(
@@ -176,9 +204,13 @@ class RiskReviewerAgent:
         # --- Rule 1: Growth claim vs revenue trend ---
         if _has_claim(prospectus_text, "growth"):
             revenue_trend = _get_metric_trend(financial_metrics, r"revenue|收入|营业")
-            if revenue_trend and len(revenue_trend) >= 2:
-                if revenue_trend[-1] < revenue_trend[0]:
-                    contradictions.append(Contradiction(
+            if (
+                revenue_trend
+                and len(revenue_trend) >= 2
+                and revenue_trend[-1] < revenue_trend[0]
+            ):
+                contradictions.append(
+                    Contradiction(
                         type="contradiction",
                         source_1="ProspectusAgent",
                         statement_1="招股书声称业务快速增长",
@@ -186,72 +218,94 @@ class RiskReviewerAgent:
                         statement_2=f"营业收入从{revenue_trend[0]:.0f}降至{revenue_trend[-1]:.0f}",
                         severity="high",
                         question="请说明招股书所述增长趋势与财务数据不一致的原因。",
-                    ))
+                    )
+                )
 
         # --- Rule 2: Pricing power / competitive advantage vs gross margin decline ---
         if _has_claim(prospectus_text, "pricing_power"):
             gm_trend = _get_metric_trend(financial_metrics, r"gross_margin|毛利率")
             if gm_trend and len(gm_trend) >= 2 and gm_trend[-1] < gm_trend[0]:
-                contradictions.append(Contradiction(
-                    type="contradiction",
-                    source_1="ProspectusAgent",
-                    statement_1="招股书声称具有竞争优势/议价能力",
-                    source_2="FinancialAgent",
-                    statement_2=f"毛利率从{gm_trend[0]:.1f}%降至{gm_trend[-1]:.1f}%",
-                    severity="warning",
-                    question="请解释竞争优势与毛利率持续下降并存的原因。",
-                ))
+                contradictions.append(
+                    Contradiction(
+                        type="contradiction",
+                        source_1="ProspectusAgent",
+                        statement_1="招股书声称具有竞争优势/议价能力",
+                        source_2="FinancialAgent",
+                        statement_2=(
+                            f"毛利率从{_format_percent(gm_trend[0])}"
+                            f"降至{_format_percent(gm_trend[-1])}"
+                        ),
+                        severity="warning",
+                        question="请解释竞争优势与毛利率持续下降并存的原因。",
+                    )
+                )
 
         # --- Rule 3: Cash position claims vs cash flow quality ---
         if _has_claim(prospectus_text, "cash_strong"):
             # Check if net cash ratio finding triggered
             cash_finding = next(
-                (f for f in findings if f.get("rule_id") == "EQ-001" and f.get("triggered")),
+                (
+                    f
+                    for f in findings
+                    if f.get("rule_id") == "EQ-001" and f.get("triggered")
+                ),
                 None,
             )
             if cash_finding:
-                contradictions.append(Contradiction(
-                    type="contradiction",
-                    source_1="ProspectusAgent",
-                    statement_1="招股书声称资金充裕/现金流充足",
-                    source_2="FinancialAgent",
-                    statement_2=f"净现比低于0.5 ({cash_finding.get('description', '')[:80]})",
-                    severity="high",
-                    question="请说明声称资金充裕但经营现金流远低于净利润的原因。",
-                ))
+                contradictions.append(
+                    Contradiction(
+                        type="contradiction",
+                        source_1="ProspectusAgent",
+                        statement_1="招股书声称资金充裕/现金流充足",
+                        source_2="FinancialAgent",
+                        statement_2=f"净现比低于0.5 ({cash_finding.get('description', '')[:80]})",
+                        severity="high",
+                        question="请说明声称资金充裕但经营现金流远低于净利润的原因。",
+                    )
+                )
 
         # --- Rule 4: Customer diversification vs AR growth ---
         if _has_claim(prospectus_text, "customer_diverse"):
             ar_finding = next(
-                (f for f in findings if f.get("rule_id") == "AQ-001" and f.get("triggered")),
+                (
+                    f
+                    for f in findings
+                    if f.get("rule_id") == "AQ-001" and f.get("triggered")
+                ),
                 None,
             )
             if ar_finding:
-                contradictions.append(Contradiction(
-                    type="contradiction",
-                    source_1="ProspectusAgent",
-                    statement_1="招股书声称客户多元化",
-                    source_2="FinancialAgent",
-                    statement_2="应收账款增速远超收入增速，存在大客户压货风险",
-                    severity="warning",
-                    question="请说明客户多元化声明与应收账款异常增长的矛盾。",
-                ))
+                contradictions.append(
+                    Contradiction(
+                        type="contradiction",
+                        source_1="ProspectusAgent",
+                        statement_1="招股书声称客户多元化",
+                        source_2="FinancialAgent",
+                        statement_2="应收账款增速远超收入增速，存在大客户压货风险",
+                        severity="warning",
+                        question="请说明客户多元化声明与应收账款异常增长的矛盾。",
+                    )
+                )
 
         # --- Rule 5: Market leadership vs industry data ---
         if _has_claim(prospectus_text, "leadership") and industry_text:
             competitors_mentioned = bool(
-                re.search(r"竞争|对手|排名|rival|competitor", industry_text, re.I)
+                re.search(
+                    r"竞争|对手|排名|rival|competitor", industry_text, re.IGNORECASE
+                )
             )
             if competitors_mentioned:
-                contradictions.append(Contradiction(
-                    type="red_flag",
-                    source_1="ProspectusAgent",
-                    statement_1="招股书声称行业领先/龙头地位",
-                    source_2="IndustryAgent",
-                    statement_2="行业分析显示存在多个主要竞争对手，市场地位需进一步验证",
-                    severity="warning",
-                    question="请提供市场份额数据验证行业领先地位的声明。",
-                ))
+                contradictions.append(
+                    Contradiction(
+                        type="red_flag",
+                        source_1="ProspectusAgent",
+                        statement_1="招股书声称行业领先/龙头地位",
+                        source_2="IndustryAgent",
+                        statement_2="行业分析显示存在多个主要竞争对手，市场地位需进一步验证",
+                        severity="warning",
+                        question="请提供市场份额数据验证行业领先地位的声明。",
+                    )
+                )
 
         # --- Rule 6: Forensic finding cross-checks ---
         for f in findings:
@@ -260,15 +314,17 @@ class RiskReviewerAgent:
             rule_id = f.get("rule_id", "")
             # Revenue authenticity issues contradict any growth claims
             if rule_id.startswith("RA-") and _has_claim(prospectus_text, "growth"):
-                contradictions.append(Contradiction(
-                    type="red_flag",
-                    source_1="ProspectusAgent",
-                    statement_1="招股书声称业务增长",
-                    source_2="FinancialAgent",
-                    statement_2=f"[{rule_id}] {f.get('name', '')}: {f.get('description', '')[:100]}",
-                    severity="high",
-                    question=f"请说明收入增长真实性存疑的指标（{f.get('name', '')}）是否反映收入确认问题。",
-                ))
+                contradictions.append(
+                    Contradiction(
+                        type="red_flag",
+                        source_1="ProspectusAgent",
+                        statement_1="招股书声称业务增长",
+                        source_2="FinancialAgent",
+                        statement_2=f"[{rule_id}] {f.get('name', '')}: {f.get('description', '')[:100]}",
+                        severity="high",
+                        question=f"请说明收入增长真实性存疑的指标（{f.get('name', '')}）是否反映收入确认问题。",
+                    )
+                )
 
         return contradictions
 
@@ -290,17 +346,21 @@ class RiskReviewerAgent:
             # If trend data exists (multiple periods), probability is higher
             probability = "Medium"
             desc = r.get("description", "")
-            if any(kw in desc for kw in ["连续", "持续", "三年", "declining", "persistent"]):
+            if any(
+                kw in desc for kw in ["连续", "持续", "三年", "declining", "persistent"]
+            ):
                 probability = "High"
 
-            matrix.append(RiskMatrixItem(
-                risk_name=r.get("title", "Unknown"),
-                category="financial",
-                probability=probability,
-                impact=impact,
-                score=self._calc_score(probability, impact),
-                evidence_refs=[r.get("title", "")],
-            ))
+            matrix.append(
+                RiskMatrixItem(
+                    risk_name=r.get("title", "Unknown"),
+                    category="financial",
+                    probability=probability,
+                    impact=impact,
+                    score=self._calc_score(probability, impact),
+                    evidence_refs=[r.get("title", "")],
+                )
+            )
 
         # --- From 20-rule forensic engine ---
         for f in triggered_findings:
@@ -309,26 +369,30 @@ class RiskReviewerAgent:
             # Layer 2 (trend) findings have higher probability
             probability = "High" if f.get("layer", 1) == 2 else "Medium"
 
-            matrix.append(RiskMatrixItem(
-                risk_name=f"[{f.get('rule_id', '')}] {f.get('name', '')}",
-                category=f.get("category", "financial"),
-                probability=probability,
-                impact=impact,
-                score=self._calc_score(probability, impact),
-                evidence_refs=[f.get("rule_id", "")],
-            ))
+            matrix.append(
+                RiskMatrixItem(
+                    risk_name=f"[{f.get('rule_id', '')}] {f.get('name', '')}",
+                    category=f.get("category", "financial"),
+                    probability=probability,
+                    impact=impact,
+                    score=self._calc_score(probability, impact),
+                    evidence_refs=[f.get("rule_id", "")],
+                )
+            )
 
         # --- From contradictions ---
         for c in contradictions:
             impact = self._severity_to_level(c.severity)
-            matrix.append(RiskMatrixItem(
-                risk_name=f"Cross-agent contradiction: {c.statement_1[:40]}...",
-                category="governance",
-                probability="Medium",
-                impact=impact,
-                score=self._calc_score("Medium", impact),
-                evidence_refs=[c.question[:60]],
-            ))
+            matrix.append(
+                RiskMatrixItem(
+                    risk_name=f"Cross-agent contradiction: {c.statement_1[:40]}...",
+                    category="governance",
+                    probability="Medium",
+                    impact=impact,
+                    score=self._calc_score("Medium", impact),
+                    evidence_refs=[c.question[:60]],
+                )
+            )
 
         # Sort by score descending
         matrix.sort(key=lambda x: x.score, reverse=True)
@@ -337,7 +401,7 @@ class RiskReviewerAgent:
     # ==================== Investment Question Generation ====================
 
     # Question templates keyed by rule_id
-    _QUESTION_TEMPLATES: dict[str, str] = {
+    _QUESTION_TEMPLATES: ClassVar[dict[str, str]] = {
         "AQ-001": "请说明应收账款增速远超收入增速的原因，是否存在大客户压货或收入确认提前的情形？",
         "AQ-002": "请说明存货周转率下降但毛利率上升的合理性，是否少结转成本虚增毛利？",
         "AQ-003": "请说明在建工程长期不转固的原因，是否存在延迟计提折旧或通过工程款转移资金？",
@@ -429,9 +493,12 @@ class RiskReviewerAgent:
     @staticmethod
     def _severity_to_level(severity: str) -> str:
         mapping = {
-            "critical": "High", "high": "High",
-            "warning": "Medium", "medium": "Medium",
-            "info": "Low", "low": "Low",
+            "critical": "High",
+            "high": "High",
+            "warning": "Medium",
+            "medium": "Medium",
+            "info": "Low",
+            "low": "Low",
         }
         return mapping.get(severity.lower(), "Medium")
 
@@ -496,7 +563,9 @@ class RiskReviewerAgent:
         ]
 
     @staticmethod
-    def _extract_finding_messages(agent_messages: list[AgentMessage] | None) -> list[dict]:
+    def _extract_finding_messages(
+        agent_messages: list[AgentMessage] | None,
+    ) -> list[dict]:
         """Extract finding-type messages from the agent message bus."""
         if not agent_messages:
             return []
@@ -543,7 +612,7 @@ class RiskReviewerAgent:
         sections: list[str] = [
             f"# {company} Investment Committee Review",
             "",
-            f"> Auto-generated from cross-agent analysis (offline mode).",
+            "> Auto-generated from cross-agent analysis (offline mode).",
             "",
             f"## Risk Level: {risk_level}",
             "",
@@ -555,7 +624,9 @@ class RiskReviewerAgent:
         sections.append("| Risk | Category | Probability | Impact | Score |")
         sections.append("|------|----------|-------------|--------|-------|")
         for r in risk_matrix[:10]:
-            sections.append(f"| {r.risk_name[:50]} | {r.category} | {r.probability} | {r.impact} | {r.score} |")
+            sections.append(
+                f"| {r.risk_name[:50]} | {r.category} | {r.probability} | {r.impact} | {r.score} |"
+            )
         sections.append("")
 
         # Contradictions
@@ -579,7 +650,9 @@ class RiskReviewerAgent:
         # Summary stats
         sections.append("## Analysis Summary")
         sections.append(f"- 6-rule engine alerts: {len(fin_risks)}")
-        sections.append(f"- 20-rule forensic findings: {len(triggered_findings)} triggered")
+        sections.append(
+            f"- 20-rule forensic findings: {len(triggered_findings)} triggered"
+        )
         sections.append(f"- Cross-agent contradictions: {len(contradictions)}")
         sections.append(f"- Total risk matrix items: {len(risk_matrix)}")
         sections.append("")
@@ -611,8 +684,10 @@ class RiskReviewerAgent:
         triggered = [f for f in fin_findings if f.get("triggered")]
 
         contradictions = self._detect_contradictions(
-            prospectus_text, prospectus_analysis,
-            None, fin_findings,  # metrics not available in this path
+            prospectus_text,
+            prospectus_analysis,
+            None,
+            fin_findings,  # metrics not available in this path
             industry_text,
         )
         risk_matrix = self._build_risk_matrix(fin_risks, triggered, contradictions)
@@ -622,7 +697,9 @@ class RiskReviewerAgent:
         context = {
             "company": company,
             "prospectus_claims": getattr(prospectus_analysis, "key_claims", []),
-            "prospectus_advantages": getattr(prospectus_analysis, "competitive_advantages", []),
+            "prospectus_advantages": getattr(
+                prospectus_analysis, "competitive_advantages", []
+            ),
             "industry_overview": getattr(industry_analysis, "industry_overview", ""),
             "industry_competitors": getattr(industry_analysis, "competitors", []),
             "financial_risks": fin_risks[:5],

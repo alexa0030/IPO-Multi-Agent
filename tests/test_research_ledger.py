@@ -37,6 +37,12 @@ def test_evidence_id_is_stable_and_legacy_page_is_preserved() -> None:
     assert second.page == 42
 
 
+def test_legacy_metric_evidence_is_classified_as_calculation() -> None:
+    evidence = Evidence(page=21, source="metric", detail="gross_margin=0.545")
+
+    assert evidence.source_type == "calculation"
+
+
 def test_finding_requires_at_least_one_evidence_reference() -> None:
     with pytest.raises(ValidationError):
         Finding(

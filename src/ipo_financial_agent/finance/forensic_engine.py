@@ -135,9 +135,10 @@ class FinancialForensicEngine:
             periods: list[str] = []
             for hdr in table.rows[:8]:
                 for cell in hdr:
-                    if _YEAR_RE.search(cell):
-                        periods.append(cell.strip())
-                        break
+                    for match in _YEAR_RE.finditer(cell):
+                        period = match.group(0)
+                        if period not in periods:
+                            periods.append(period)
             if not periods:
                 continue
             for row_idx, row in enumerate(table.rows):
@@ -166,6 +167,7 @@ class FinancialForensicEngine:
                         "value": val,
                         "page": page,
                         "statement_type": table.statement_type,
+                        "table_id": table.table_id,
                     })
         return dict(index)
 
@@ -783,15 +785,33 @@ class FinancialForensicEngine:
         self, doc_id: str, raw_index: dict, fact_map: dict
     ) -> FinancialFinding:
         """RA-003: Tax-to-revenue ratio diverging from revenue growth (Layer 2)."""
-        entries = self._raw_lookup(raw_index, ["税费", "所得税", "税项", "税金"])
+        grouped_tax: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for name, raw_entries in raw_index.items():
+            if "已付所得税" not in name:
+                continue
+            for entry in raw_entries:
+                if entry["statement_type"] == "cash_flow_statement":
+                    grouped_tax[entry["table_id"]].append(entry)
+        tax_groups = list(grouped_tax.values())
+        entries = min(
+            tax_groups,
+            key=lambda group: min(entry["page"] for entry in group),
+            default=[],
+        )
+        entries = sorted(
+            entries,
+            key=lambda entry: tuple(
+                int(value) for value in re.findall(r"\d+", entry["period"])
+            ),
+        )
         rev_series = self._fact_series(fact_map, "revenue")
 
         if len(entries) < 2 or len(rev_series) < 2:
             return self._insufficient("RA-003", "纳税额收入比背离", self.CAT_REVENUE, 2,
                                       "Need >= 2 periods of tax and revenue data.")
 
-        tax_latest = entries[-1]["value"]
-        tax_prev = entries[-2]["value"]
+        tax_latest = abs(entries[-1]["value"])
+        tax_prev = abs(entries[-2]["value"])
         tax_growth = (tax_latest - tax_prev) / abs(tax_prev) if tax_prev else 0
 
         rev_latest = rev_series[-1][1].value

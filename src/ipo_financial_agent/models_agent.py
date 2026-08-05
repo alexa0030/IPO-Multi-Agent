@@ -121,6 +121,16 @@ class Evidence(BaseModel):
 
     @model_validator(mode="after")
     def normalize_and_identify(self) -> Self:
+        if self.source_type == "prospectus":
+            if self.source == "metric":
+                self.source_type = "calculation"
+            elif self.source in {
+                "balance_sheet",
+                "income_statement",
+                "cash_flow_statement",
+                "changes_in_equity",
+            }:
+                self.source_type = "financial_statement"
         if self.page_number is None and self.page > 0:
             self.page_number = self.page
         if self.page == 0 and self.page_number is not None:

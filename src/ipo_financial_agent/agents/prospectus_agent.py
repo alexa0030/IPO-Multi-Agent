@@ -9,6 +9,7 @@ Tools:
 Every finding carries Evidence (page number) so downstream agents can trace
 claims back to the prospectus source.
 """
+
 from __future__ import annotations
 
 import re
@@ -16,20 +17,46 @@ from typing import Any
 
 from ipo_financial_agent.llm.client import OpenAICompatibleClient
 from ipo_financial_agent.llm.prompts_agents import PROSPECTUS_ANALYSIS_SYSTEM_PROMPT
-from ipo_financial_agent.models_agent import Evidence, ProspectusAnalysis, ProspectusEntity
-
+from ipo_financial_agent.models_agent import (
+    Evidence,
+    ProspectusAnalysis,
+    ProspectusEntity,
+)
 
 # ==================== Page Selection ====================
 
 _BUSINESS_KEYWORDS = [
-    "业务", "商业模式", "经营", "产品", "服务",
-    "客户", "供应商", "董事", "高管", "管理层",
-    "竞争优势", "风险因素", "历史", "发展",
-    "BUSINESS", "OVERVIEW", "RISK", "PRODUCTS",
-    "CUSTOMERS", "SUPPLIERS", "MANAGEMENT",
+    "业务",
+    "商业模式",
+    "经营",
+    "产品",
+    "服务",
+    "客户",
+    "供应商",
+    "董事",
+    "高管",
+    "管理层",
+    "竞争优势",
+    "风险因素",
+    "历史",
+    "发展",
+    "BUSINESS",
+    "OVERVIEW",
+    "RISK",
+    "PRODUCTS",
+    "CUSTOMERS",
+    "SUPPLIERS",
+    "MANAGEMENT",
 ]
 
 _MAX_CONTEXT_CHARS = 12000
+
+_PAGE_TOPICS: dict[str, tuple[list[str], int]] = {
+    "summary": (["概要", "我们是", "我们主要提供", "本集团是"], 4),
+    "business": (["业务模式", "我们的解决方案", "主要产品", "客户", "供应商"], 10),
+    "governance": (["历史、发展及公司架构", "董事及高级管理层", "控股股东"], 5),
+    "risk": (["风险因素"], 4),
+}
 
 
 # ==================== Entity Extraction Patterns ====================
@@ -63,11 +90,23 @@ _RATIO_PATTERN = re.compile(r"占比[约]?(\d+\.?\d*)\s*%")
 
 # Claim keywords for cross-validation
 _CLAIM_PATTERNS = {
-    "growth": re.compile(r"(?:收入|营收|利润|业绩|规模)(?:连续|持续)?(?:高速|快速|大幅)?增长(?:\d+\.?\d*\s*%|倍)?", re.MULTILINE),
-    "leadership": re.compile(r"(?:行业|市场|细分)?(?:领先|龙头|第一|最大|首位|排名(?:第一|前列)|市占率(?:第一|最高))", re.MULTILINE),
-    "pricing_power": re.compile(r"(?:议价能力|定价权|品牌优势|技术壁垒|核心竞争力|竞争优势)", re.MULTILINE),
-    "cash_strong": re.compile(r"(?:资金充裕|现金流充足|现金充裕|财务稳健|流动性良好)", re.MULTILINE),
-    "customer_diverse": re.compile(r"(?:客户多元|客户分散|客户结构优化|不存在重大依赖)", re.MULTILINE),
+    "growth": re.compile(
+        r"(?:收入|营收|利润|业绩|规模)(?:连续|持续)?(?:高速|快速|大幅)?增长(?:\d+\.?\d*\s*%|倍)?",
+        re.MULTILINE,
+    ),
+    "leadership": re.compile(
+        r"(?:行业|市场|细分)?(?:领先|龙头|第一|最大|首位|排名(?:第一|前列)|市占率(?:第一|最高))",
+        re.MULTILINE,
+    ),
+    "pricing_power": re.compile(
+        r"(?:议价能力|定价权|品牌优势|技术壁垒|核心竞争力|竞争优势)", re.MULTILINE
+    ),
+    "cash_strong": re.compile(
+        r"(?:资金充裕|现金流充足|现金充裕|财务稳健|流动性良好)", re.MULTILINE
+    ),
+    "customer_diverse": re.compile(
+        r"(?:客户多元|客户分散|客户结构优化|不存在重大依赖)", re.MULTILINE
+    ),
 }
 
 
@@ -119,54 +158,39 @@ class ProspectusAgent:
             if text:
                 page_map[page_num] = text
 
-        # Find relevant section hits
-        relevant_sections: list[tuple[int, str]] = []
-        if section_hits:
-            for hit in section_hits:
-                title = getattr(hit, "title", "") or ""
-                title_upper = title.upper()
-                page_num = getattr(hit, "page", 0)
-                if any(kw in title or kw in title_upper for kw in _BUSINESS_KEYWORDS):
-                    relevant_sections.append((page_num, title))
+        del section_hits  # Financial section hits are not business-page selectors.
 
-        # Collect text with page tracking
+        chosen: dict[int, tuple[int, str]] = {}
+        for topic, (keywords, limit) in _PAGE_TOPICS.items():
+            scored: list[tuple[int, int]] = []
+            for page_num, text in page_map.items():
+                head = text[:500]
+                if "目录" in head[:250] or page_num <= 12:
+                    continue
+                score = sum(min(text.count(keyword), 3) for keyword in keywords)
+                if any(keyword in head for keyword in keywords):
+                    score += 5
+                if score > 0:
+                    scored.append((score, page_num))
+            for score, page_num in sorted(scored, key=lambda item: (-item[0], item[1]))[
+                :limit
+            ]:
+                previous = chosen.get(page_num)
+                if previous is None or score > previous[0]:
+                    chosen[page_num] = (score, topic)
+
         selected: list[dict[str, Any]] = []
         total_chars = 0
-        seen_pages: set[int] = set()
-
-        # Priority 1: section hit pages
-        for page_num, title in relevant_sections:
-            if page_num in page_map and page_num not in seen_pages and total_chars < _MAX_CONTEXT_CHARS:
-                text = page_map[page_num]
-                selected.append({"page": page_num, "text": text, "title": title})
-                seen_pages.add(page_num)
-                total_chars += len(text)
-
-        # Priority 2: keyword-matched pages
-        if total_chars < _MAX_CONTEXT_CHARS // 2:
-            for page_num, text in sorted(page_map.items()):
-                if page_num in seen_pages:
-                    continue
-                if total_chars >= _MAX_CONTEXT_CHARS:
-                    break
-                if any(kw in text for kw in _BUSINESS_KEYWORDS[:10]):
-                    chunk = text[:1500]
-                    selected.append({"page": page_num, "text": chunk, "title": "keyword_match"})
-                    seen_pages.add(page_num)
-                    total_chars += len(chunk)
-
-        # Priority 3: first 30 pages (usually business overview)
-        if total_chars < _MAX_CONTEXT_CHARS // 3:
-            for page_num in sorted(page_map.keys())[:30]:
-                if page_num in seen_pages:
-                    continue
-                if total_chars >= _MAX_CONTEXT_CHARS:
-                    break
-                chunk = page_map[page_num][:800]
-                selected.append({"page": page_num, "text": chunk, "title": "early_pages"})
-                seen_pages.add(page_num)
-                total_chars += len(chunk)
-
+        for page_num in sorted(chosen):
+            if total_chars >= _MAX_CONTEXT_CHARS:
+                break
+            text = page_map[page_num]
+            remaining = _MAX_CONTEXT_CHARS - total_chars
+            chunk = text[: min(1800, remaining)]
+            selected.append(
+                {"page": page_num, "text": chunk, "title": chosen[page_num][1]}
+            )
+            total_chars += len(chunk)
         return selected
 
     # ==================== Tool 2: Entity Extractor ====================
@@ -184,25 +208,46 @@ class ProspectusAgent:
             name = match.group(1).strip() if match.groups() else match.group(0).strip()
             # Clean up name — remove trailing punctuation, limit length
             name = re.sub(r"[,，。；;。]$", "", name).strip()[:100]
+            if section_name in {"customer", "supplier"}:
+                companies = re.findall(
+                    r"[\u4e00-\u9fffA-Za-z0-9（）()·]{2,50}"
+                    r"(?:股份有限公司|有限责任公司|有限公司|集团|公司)",
+                    name,
+                )
+                masked = re.findall(r"(?:客户|供应商)[A-Z一二三四五六七八九十]", name)
+                candidates = companies or masked
+                if not candidates:
+                    continue
+                name = candidates[0]
+            elif section_name == "product":
+                name = re.split(r"[，。；;]", name, maxsplit=1)[0].strip()
+                if len(name) > 60 or any(
+                    phrase in name for phrase in ("我们的", "本公司", "本集团")
+                ):
+                    continue
             if not name or len(name) < 2:
                 continue
 
             # Try to find revenue ratio near the match
-            ratio_match = _RATIO_PATTERN.search(text[match.end():match.end() + 200])
+            ratio_match = _RATIO_PATTERN.search(text[match.end() : match.end() + 200])
             detail = ""
             if ratio_match:
                 detail = f"revenue_ratio: {ratio_match.group(1)}%"
 
-            entities.append(ProspectusEntity(
-                name=name,
-                detail=detail,
-                evidence=[Evidence(
-                    source_type="prospectus",
-                    page=page_num,
-                    source=f"P{page_num}",
-                    detail=f"{section_name}: {name[:60]}",
-                )],
-            ))
+            entities.append(
+                ProspectusEntity(
+                    name=name,
+                    detail=detail,
+                    evidence=[
+                        Evidence(
+                            source_type="prospectus",
+                            page=page_num,
+                            source=f"P{page_num}",
+                            detail=f"{section_name}: {name[:60]}",
+                        )
+                    ],
+                )
+            )
         return entities[:20]  # Cap at 20
 
     @staticmethod
@@ -221,16 +266,20 @@ class ProspectusAgent:
                 continue
             seen_names.add(name)
 
-            entities.append(ProspectusEntity(
-                name=name,
-                detail=f"role: {role}",
-                evidence=[Evidence(
-                    source_type="prospectus",
-                    page=page_num,
-                    source=f"P{page_num}",
-                    detail=f"{role}: {name}",
-                )],
-            ))
+            entities.append(
+                ProspectusEntity(
+                    name=name,
+                    detail=f"role: {role}",
+                    evidence=[
+                        Evidence(
+                            source_type="prospectus",
+                            page=page_num,
+                            source=f"P{page_num}",
+                            detail=f"{role}: {name}",
+                        )
+                    ],
+                )
+            )
         return entities[:15]
 
     # ==================== Tool 3: Risk Factor Extractor ====================
@@ -246,8 +295,6 @@ class ProspectusAgent:
         for page_info in pages:
             title = page_info.get("title", "")
             text = page_info["text"]
-            page_num = page_info["page"]
-
             # Detect risk section start
             if "风险因素" in title or "RISK FACTORS" in title.upper():
                 in_risk_section = True
@@ -259,13 +306,21 @@ class ProspectusAgent:
             # Pattern: "1." / "（1）" / "一、" / "- " at start of line
             for line in text.split("\n"):
                 line = line.strip()
-                if re.match(r"^(?:\d+[.、]|（\d+）|[一二三四五六七八九十]+[、)]|-\s)", line):
-                    risk_text = re.sub(r"^(?:\d+[.、]|（\d+）|[一二三四五六七八九十]+[、)]|-\s)", "", line).strip()
+                if re.match(
+                    r"^(?:\d+[.、]|（\d+）|[一二三四五六七八九十]+[、)]|-\s)", line
+                ):
+                    risk_text = re.sub(
+                        r"^(?:\d+[.、]|（\d+）|[一二三四五六七八九十]+[、)]|-\s)",
+                        "",
+                        line,
+                    ).strip()
                     if len(risk_text) > 10 and risk_text not in risks:
                         risks.append(risk_text[:200])
 
             # Stop after risk section (next major section)
-            if in_risk_section and re.search(r"^#\s*(?:业务|财务|管理层|董事)", text, re.MULTILINE):
+            if in_risk_section and re.search(
+                r"^#\s*(?:业务|财务|管理层|董事)", text, re.MULTILINE
+            ):
                 break
 
         return risks[:15]
@@ -276,7 +331,7 @@ class ProspectusAgent:
     def _extract_key_claims(text: str) -> list[str]:
         """Extract key claims for cross-validation by Investment Committee."""
         claims: list[str] = []
-        for claim_type, pattern in _CLAIM_PATTERNS.items():
+        for pattern in _CLAIM_PATTERNS.values():
             for match in pattern.finditer(text):
                 claim = match.group(0).strip()
                 if len(claim) > 5 and claim not in claims:
@@ -304,9 +359,15 @@ class ProspectusAgent:
             page_num = page_info["page"]
 
             # Extract entities with evidence
-            customers.extend(self._extract_entities(text, _CUSTOMER_PATTERN, page_num, "customer"))
-            suppliers.extend(self._extract_entities(text, _SUPPLIER_PATTERN, page_num, "supplier"))
-            products.extend(self._extract_entities(text, _PRODUCT_PATTERN, page_num, "product"))
+            customers.extend(
+                self._extract_entities(text, _CUSTOMER_PATTERN, page_num, "customer")
+            )
+            suppliers.extend(
+                self._extract_entities(text, _SUPPLIER_PATTERN, page_num, "supplier")
+            )
+            products.extend(
+                self._extract_entities(text, _PRODUCT_PATTERN, page_num, "product")
+            )
             management.extend(self._extract_management(text, page_num))
 
             # Extract claims
@@ -329,31 +390,47 @@ class ProspectusAgent:
         # Extract risk factors
         risks = self._extract_risk_factors(pages)
 
-        # Build business model summary from first few pages
-        business_text = combined_text[:800].replace("\n", " ").strip()
-
-        # Build evidence for business model
-        bm_evidence = [
-            Evidence(
-                source_type="prospectus",
-                page=pages[0]["page"] if pages else 0,
-                source=f"P{pages[0]['page']}" if pages else "",
-                detail="business_overview",
+        business_text = ""
+        bm_evidence: list[Evidence] = []
+        for page_info in pages:
+            normalized = re.sub(r"\s+", "", page_info["text"])
+            match = re.search(
+                r"((?:我们|本集团)(?:是|主要提供).{20,500}?。)",
+                normalized,
             )
-        ] if pages else []
+            if not match:
+                continue
+            business_text = match.group(1)
+            bm_evidence = [
+                Evidence(
+                    source_type="prospectus",
+                    page=page_info["page"],
+                    source=f"P{page_info['page']}",
+                    detail=business_text,
+                )
+            ]
+            break
 
         # Deduplicate
         all_claims = list(dict.fromkeys(all_claims))[:10]
         advantages = list(dict.fromkeys(advantages))[:10]
 
         markdown = self._build_offline_markdown(
-            company, business_text, products, customers,
-            suppliers, management, advantages, risks, all_claims, pages,
+            company,
+            business_text,
+            products,
+            customers,
+            suppliers,
+            management,
+            advantages,
+            risks,
+            all_claims,
+            pages,
         )
 
         return ProspectusAnalysis(
             company=company,
-            business_model=f"（离线模式-工具提取）{business_text[:400]}...",
+            business_model=business_text,
             business_model_evidence=bm_evidence,
             main_products=products[:10],
             customers=customers[:10],
@@ -381,7 +458,7 @@ class ProspectusAgent:
         sections: list[str] = [
             f"# {company} Prospectus Analysis (Offline Tool-Augmented Mode)",
             "",
-            f"> Extracted using regex-based entity extraction tools.",
+            "> Extracted using regex-based entity extraction tools.",
             f"> Pages analyzed: {len(pages)} (P{pages[0]['page']}" if pages else "",
             f"-P{pages[-1]['page']})" if pages else "",
             "",

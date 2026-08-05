@@ -9,7 +9,6 @@ from ipo_financial_agent.agents.financial_agent import FinancialAnalysisAgent
 from ipo_financial_agent.agents.prospectus_agent import ProspectusAgent
 from ipo_financial_agent.agents.industry_agent import IndustryAgent
 from ipo_financial_agent.agents.risk_reviewer import RiskReviewerAgent
-from ipo_financial_agent.agents.report_writer import ReportWriterAgent
 from ipo_financial_agent.agents.research_manager import ResearchManagerAgent
 from ipo_financial_agent.config import Settings, get_settings
 from ipo_financial_agent.document.topic_page_selector import TopicPageSelector
@@ -29,6 +28,7 @@ from ipo_financial_agent.research import (
     industry_research_patch,
     prospectus_research_patch,
 )
+from ipo_financial_agent.rendering import render_investment_markdown
 from ipo_financial_agent.storage.json_store import write_json
 from ipo_financial_agent.storage.evidence_store import EvidenceStore
 from ipo_financial_agent.storage.repository import FinancialRepository
@@ -430,24 +430,7 @@ class IPOFinancialPipeline:
     # ========================
 
     def _run_report_writer(self, state: dict[str, Any]) -> dict[str, Any]:
-        client = None
-        if self._should_use_llm(state["llm_mode"]):
-            client = OpenAICompatibleClient(self.settings)
-
-        agent = ReportWriterAgent(client)
-
-        financial_md = ""
-        analysis = state.get("analysis")
-        if analysis and hasattr(analysis, "markdown"):
-            financial_md = analysis.markdown
-
-        final_report = agent.write(
-            company=state["company"],
-            prospectus_analysis=state.get("prospectus_analysis"),
-            industry_analysis=state.get("industry_analysis"),
-            financial_markdown=financial_md,
-            risk_review=state.get("risk_review"),
-        )
+        final_report = render_investment_markdown(state)
         print(
             f"[report-writer] Report generated: {len(final_report)} chars",
             flush=True,
