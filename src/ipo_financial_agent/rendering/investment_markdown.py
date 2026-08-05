@@ -68,6 +68,7 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
     conclusion = state.get("due_diligence_conclusion")
     risk_review = state.get("risk_review")
     prospectus = state.get("prospectus_analysis")
+    dossier = _value(prospectus, "dossier")
     metrics = list(state.get("metrics", []) or [])
     challenges = list(state.get("challenges", []) or [])
     questions = list(state.get("diligence_questions", []) or [])
@@ -101,6 +102,36 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
         )
     else:
         lines.append("- 商业模式尚未形成具备页码证据的结论。")
+    topic_titles = {
+        "history_ownership": "公司沿革、股权与控制权",
+        "capital_events": "融资、并购及重大资本事件",
+        "products_business_model": "产品、服务与商业模式",
+        "customers_suppliers": "客户与供应商",
+        "operations": "研发、生产、销售、交付与回款",
+        "subsidiaries_management": "子公司、经营主体与管理层",
+    }
+    topic_findings = _value(dossier, "topic_findings", {}) or {}
+    for topic, title in topic_titles.items():
+        lines.extend(["", f"### {title}", ""])
+        items = topic_findings.get(topic, [])
+        if not items:
+            lines.append("- 尚未形成经页码校验的详细底稿。")
+            continue
+        for item in items:
+            labels = {
+                "fact": "披露事实",
+                "company_explanation": "公司解释",
+                "analyst_inference": "分析判断",
+            }
+            citations = " ".join(
+                _evidence_label(entry) for entry in (_value(item, "evidence", []) or [])
+            )
+            kind = labels.get(_value(item, "finding_type", "fact"), "披露事实")
+            lines.append(f"- **{kind}**：{_value(item, 'statement', '')} {citations}".rstrip())
+    dossier_questions = list(_value(dossier, "open_questions", []) or [])
+    if dossier_questions:
+        lines.extend(["", "### 公司与业务补充核查问题", ""])
+        lines.extend(f"- {item}" for item in dossier_questions)
     for title, field in (
         ("主要产品与服务", "main_products"),
         ("客户", "customers"),

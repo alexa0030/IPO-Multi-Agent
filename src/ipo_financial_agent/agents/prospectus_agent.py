@@ -19,6 +19,7 @@ from ipo_financial_agent.llm.client import OpenAICompatibleClient
 from ipo_financial_agent.llm.prompts_agents import PROSPECTUS_ANALYSIS_SYSTEM_PROMPT
 from ipo_financial_agent.models_agent import (
     CompanyBusinessDossier,
+    CompanyDossierFinding,
     Evidence,
     ProspectusAnalysis,
     ProspectusEntity,
@@ -102,9 +103,9 @@ _PAGE_TOPICS: dict[str, tuple[list[str], int]] = {
 
 _INDUSTRY_PROFILES: dict[str, tuple[str, ...]] = {
     "manufacturing": ("产能", "产量", "销量", "生产线", "良率", "原材料", "在建工程"),
-    "software_saas": ("SaaS", "订阅", "续费", "软件许可", "实施服务", "研发资本化"),
+    "software_saas": ("SaaS", "订阅", "续费", "软件许可", "软件产品", "软件服务", "软件系统", "研发资本化"),
     "pharma_healthcare": ("临床", "药品", "疫苗", "注册审批", "商业化", "推广服务"),
-    "consumer_retail": ("门店", "经销商", "复购", "同店", "退货率", "消费者"),
+    "consumer_retail": ("门店", "经销商", "复购率", "同店销售", "退货率", "终端消费者", "零售渠道"),
     "engineering_services": ("在手订单", "合同资产", "完工进度", "项目验收", "质保金"),
     "platform_internet": ("GMV", "活跃用户", "佣金率", "获客成本", "平台商户"),
 }
@@ -117,6 +118,46 @@ _COMPANY_SIGNALS: dict[str, tuple[str, ...]] = {
     "business_transformation": ("业务转型", "终止经营", "剥离", "战略转型"),
     "capacity_expansion": ("扩产", "新增产能", "在建工程", "生产基地"),
 }
+
+_DOSSIER_TOPIC_INSTRUCTIONS: dict[str, str] = {
+    "history_ownership": "公司沿革、改制上市、主要股东、控股股东、实控人、一致行动及控制权变化",
+    "capital_events": "融资、增资、股份转让、收购出售、重组、业绩承诺、商誉及其业务或报表影响",
+    "products_business_model": "产品服务矩阵、收入来源、定价、销售、交付、验收、结算和完整交易链条",
+    "customers_suppliers": "客户供应商画像、前五大集中度、依赖、关联关系、信用期、复购与议价能力",
+    "operations": "研发、生产、产能产量销量、良率、人员、获客、订单、交付和回款流程",
+    "subsidiaries_management": "重要子公司、经营主体、管理层、组织架构及各主体在业务链条中的作用",
+}
+
+_DOSSIER_RELEVANCE_TERMS: dict[str, tuple[str, ...]] = {
+    "history_ownership": (
+        "成立", "创立", "改制", "股东", "控股", "实际控制", "持股", "股权", "一致行动", "控制权",
+    ),
+    "capital_events": (
+        "融资", "增资", "股份转让", "收购", "出售", "重组", "对价", "业绩承诺", "商誉", "业务合并",
+    ),
+    "products_business_model": (
+        "产品", "服务", "解决方案", "收入", "定价", "销售", "交付", "验收", "结算", "收费", "商业模式",
+    ),
+    "customers_suppliers": (
+        "客户", "供应商", "集中度", "采购", "信用期", "经销商", "复购", "返利", "议价",
+    ),
+    "operations": (
+        "研发", "生产", "产能", "产量", "销量", "良率", "人员", "雇员", "订单", "交付", "回款", "外包",
+    ),
+    "subsidiaries_management": (
+        "子公司", "附属公司", "附属企业", "经营主体", "董事", "管理层", "高级管理", "总经理", "组织架构", "分公司",
+    ),
+}
+
+_ANALYTICAL_LANGUAGE = (
+    "显示", "表明", "反映", "意味着", "合理", "较低", "较高", "良好", "稳健", "无重大依赖", "有利于", "预计", "可能",
+)
+
+_MANAGEMENT_TERMS = (
+    "董事", "管理层", "高级管理", "总经理", "首席", "财务总监", "监事", "董事会",
+)
+_SUBSIDIARY_TERMS = ("子公司", "附属公司", "附属企业", "经营主体", "分公司")
+_ISSUER_SELF_REFERENCES = ("本公司", "本集团", "我们")
 
 
 # ==================== Entity Extraction Patterns ====================
@@ -220,7 +261,7 @@ class ProspectusAgent:
 
         del section_hits  # Financial section hits are not business-page selectors.
 
-        chosen: dict[int, tuple[int, str]] = {}
+        page_topics: dict[int, dict[str, int]] = {}
         for topic, (keywords, limit) in _PAGE_TOPICS.items():
             scored: list[tuple[int, int]] = []
             for page_num, text in page_map.items():
@@ -235,18 +276,16 @@ class ProspectusAgent:
             for score, page_num in sorted(scored, key=lambda item: (-item[0], item[1]))[
                 :limit
             ]:
-                previous = chosen.get(page_num)
-                if previous is None or score > previous[0]:
-                    chosen[page_num] = (score, topic)
+                page_topics.setdefault(page_num, {})[topic] = score
 
         selected: list[dict[str, Any]] = []
         total_chars = 0
         topic_order = {topic: index for index, topic in enumerate(_PAGE_TOPICS)}
         ranked_pages = sorted(
-            chosen,
+            page_topics,
             key=lambda page_num: (
-                topic_order[chosen[page_num][1]],
-                -chosen[page_num][0],
+                min(topic_order[topic] for topic in page_topics[page_num]),
+                -max(page_topics[page_num].values()),
                 page_num,
             ),
         )
@@ -256,8 +295,16 @@ class ProspectusAgent:
             text = page_map[page_num]
             remaining = _MAX_CONTEXT_CHARS - total_chars
             chunk = text[: min(1800, remaining)]
+            topics = sorted(
+                page_topics[page_num], key=lambda topic: topic_order[topic]
+            )
             selected.append(
-                {"page": page_num, "text": chunk, "title": chosen[page_num][1]}
+                {
+                    "page": page_num,
+                    "text": chunk,
+                    "title": topics[0],
+                    "topics": topics,
+                }
             )
             total_chars += len(chunk)
         return selected
@@ -267,16 +314,17 @@ class ProspectusAgent:
         topic_page_map: dict[str, list[int]] = {}
         combined = "\n".join(item["text"] for item in pages)
         for item in pages:
-            topic_page_map.setdefault(item["title"], []).append(item["page"])
+            for topic in item.get("topics", [item["title"]]):
+                topic_page_map.setdefault(topic, []).append(item["page"])
         profile_scores = {
-            name: sum(min(combined.count(keyword), 4) for keyword in keywords)
+            name: sum(1 for keyword in keywords if keyword.lower() in combined.lower())
             for name, keywords in _INDUSTRY_PROFILES.items()
         }
         profiles = [
             name for name, score in sorted(
                 profile_scores.items(), key=lambda item: (-item[1], item[0])
             )
-            if score >= 3
+            if score >= 2
         ][:2]
         signals = [
             name for name, keywords in _COMPANY_SIGNALS.items()
@@ -293,6 +341,160 @@ class ProspectusAgent:
             company_specific_signals=signals,
             coverage_gaps=sorted(required - set(topic_page_map)),
         )
+
+    def _extract_dossier_with_llm(
+        self,
+        dossier: CompanyBusinessDossier,
+        pages: list[dict[str, Any]],
+    ) -> CompanyBusinessDossier:
+        """Extract each topic independently so thin topics cannot be crowded out."""
+        if self.client is None:
+            return dossier
+        by_topic: dict[str, list[dict[str, Any]]] = {}
+        for page in pages:
+            for topic in page.get("topics", [page["title"]]):
+                by_topic.setdefault(topic, []).append(page)
+        all_questions: list[str] = []
+        for topic, instruction in _DOSSIER_TOPIC_INSTRUCTIONS.items():
+            topic_pages = by_topic.get(topic, [])
+            if not topic_pages:
+                continue
+            context = "\n\n".join(
+                f"--- P{item['page']} ---\n{item['text'][:3000]}" for item in topic_pages
+            )[:18000]
+            prompt = f"""请为{dossier.company}提取港股 IPO 公司尽调底稿。
+本轮唯一主题：{topic}——{instruction}。
+已识别行业画像：{dossier.industry_profiles}。
+公司特定核查信号：{dossier.company_specific_signals}。
+
+规则：
+1. 只能使用下方招股书页面，不得补充外部知识。
+2. 每条结论只能引用一个给定物理页码，并附上从该页逐字复制的 evidence_quote。
+3. 严格区分披露事实 fact、公司解释 company_explanation、分析判断 analyst_inference。
+4. statement 和 open_questions 必须使用中文。
+5. 严格聚焦本轮主题；通用公司介绍不能代替子公司、股权、客户等具体事实。
+6. 缺少证据时提出问题，不能把证据缺失写成负面结论。
+7. 尽可能保留金额、比例、日期、交易对手和前后变化。
+8. 返回 4-12 条有实质内容且不重复的结论。
+9. evidence_quote 必须是短而完整的原文，不是改写；找不到原文就省略该结论。
+10. open_questions 只能询问本轮主题，且不得声称“招股书未披露”；只能说明当前候选页尚未核实。
+
+仅返回 JSON：
+{{"findings":[{{"statement":"...","page":123,"evidence_quote":"exact text from page","finding_type":"fact|company_explanation|analyst_inference","confidence":0.8}}],"open_questions":["..."]}}
+
+招股书页面：
+{context}
+"""
+            raw = self.client.complete_text(
+                system_prompt=PROSPECTUS_ANALYSIS_SYSTEM_PROMPT,
+                user_prompt=prompt,
+                max_tokens=2400,
+            )
+            findings, questions = self._parse_dossier_topic(topic, raw, topic_pages)
+            dossier.topic_findings[topic] = findings
+            all_questions.extend(questions)
+        dossier.open_questions = list(dict.fromkeys(all_questions))[:30]
+        return dossier
+
+    @staticmethod
+    def _parse_dossier_topic(
+        topic: str,
+        raw: str,
+        pages: list[dict[str, Any]],
+    ) -> tuple[list[CompanyDossierFinding], list[str]]:
+        allowed_pages = {item["page"] for item in pages}
+        page_text = {item["page"]: item["text"] for item in pages}
+        try:
+            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip())
+            payload = __import__("json").loads(text)
+        except (TypeError, ValueError):
+            return [], [f"{topic}：模型输出无法解析，需重新抽取。"]
+        findings: list[CompanyDossierFinding] = []
+        seen: set[tuple[int, str]] = set()
+        for item in payload.get("findings", []):
+            statement = str(item.get("statement", "")).strip()
+            evidence_quote = str(item.get("evidence_quote", "")).strip()
+            page_match = re.search(r"\d+", str(item.get("page", "")))
+            if not page_match:
+                continue
+            page = int(page_match.group(0))
+            finding_type = item.get("finding_type", "fact")
+            if finding_type not in {"fact", "company_explanation", "analyst_inference"}:
+                finding_type = "fact"
+            normalized_quote = re.sub(r"\s+", "", evidence_quote)
+            normalized_page = re.sub(r"\s+", "", page_text.get(page, ""))
+            relevance_text = f"{statement}{evidence_quote}"
+            relevance_terms = _DOSSIER_RELEVANCE_TERMS.get(topic, ())
+            if (
+                not statement
+                or page not in allowed_pages
+                or len(normalized_quote) < 6
+                or normalized_quote not in normalized_page
+                or not any(term in relevance_text for term in relevance_terms)
+            ):
+                continue
+            if topic == "subsidiaries_management":
+                is_management = any(term in relevance_text for term in _MANAGEMENT_TERMS)
+                is_issuer_subsidiary = (
+                    any(term in relevance_text for term in _SUBSIDIARY_TERMS)
+                    and any(
+                        term in relevance_text for term in _ISSUER_SELF_REFERENCES
+                    )
+                )
+                if not (is_management or is_issuer_subsidiary):
+                    continue
+            if finding_type != "analyst_inference" and any(
+                term in statement and term not in evidence_quote
+                for term in _ANALYTICAL_LANGUAGE
+            ):
+                finding_type = "analyst_inference"
+            key = (page, statement)
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                confidence = float(item.get("confidence", 0.8))
+            except (TypeError, ValueError):
+                confidence = 0.8
+            confidence = max(0.0, min(1.0, confidence))
+            verified_quote = re.sub(r"\s+", " ", evidence_quote).strip()
+            # For disclosed facts and issuer explanations, use the verified
+            # extract itself as the report statement.  A real quote plus a real
+            # page number still does not make an LLM paraphrase relation-safe.
+            if finding_type in {"fact", "company_explanation"}:
+                statement = verified_quote
+            findings.append(
+                CompanyDossierFinding(
+                    topic=topic,
+                    statement=statement,
+                    finding_type=finding_type,
+                    confidence=confidence,
+                    evidence=[
+                        Evidence(
+                            source_type="prospectus",
+                            page_number=page,
+                            source=f"P{page}",
+                            title=f"Company dossier: {topic}",
+                            content=verified_quote,
+                            metadata={
+                                "topic": topic,
+                                "finding_type": finding_type,
+                                "quote_verified": True,
+                            },
+                        )
+                    ],
+                )
+            )
+        relevance_terms = _DOSSIER_RELEVANCE_TERMS.get(topic, ())
+        questions: list[str] = []
+        for item in payload.get("open_questions", []):
+            question = str(item).strip()
+            if not question or not any(term in question for term in relevance_terms):
+                continue
+            question = question.replace("招股书未披露", "当前候选页尚未核实")
+            question = question.replace("招股书中未披露", "当前候选页尚未核实")
+            questions.append(question)
+        return findings[:12], questions[:8]
 
     @staticmethod
     def _evidenced_entity(name: str, page_num: int, kind: str) -> ProspectusEntity:
@@ -745,6 +947,7 @@ class ProspectusAgent:
         """LLM mode: send context, parse response, attach evidence."""
         # First run offline extraction for evidence
         offline = self._offline_analysis(company, pages, combined_text)
+        offline.dossier = self._extract_dossier_with_llm(offline.dossier, pages)
 
         # Build LLM prompt with page references
         context_text = ""
@@ -770,7 +973,9 @@ class ProspectusAgent:
         return ProspectusAnalysis(
             company=company,
             dossier=offline.dossier,
-            business_model=self._extract_section(markdown, "Business Model|商业模式"),
+            # Keep the page-grounded deterministic description until the
+            # dossier writer can provide a separately validated replacement.
+            business_model=offline.business_model,
             business_model_evidence=offline.business_model_evidence,
             main_products=offline.main_products,
             customers=offline.customers,

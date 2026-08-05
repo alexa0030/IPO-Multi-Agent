@@ -339,6 +339,18 @@ class CompanyBusinessDossier(BaseModel):
     industry_profiles: list[str] = Field(default_factory=list)
     company_specific_signals: list[str] = Field(default_factory=list)
     coverage_gaps: list[str] = Field(default_factory=list)
+    topic_findings: dict[str, list["CompanyDossierFinding"]] = Field(default_factory=dict)
+    open_questions: list[str] = Field(default_factory=list)
+
+
+class CompanyDossierFinding(BaseModel):
+    """A page-grounded company/business fact, explanation, or cautious inference."""
+
+    topic: str
+    statement: str
+    finding_type: Literal["fact", "company_explanation", "analyst_inference"] = "fact"
+    evidence: list[Evidence] = Field(min_length=1)
+    confidence: float = Field(default=0.8, ge=0, le=1)
 
 
 class ProspectusAnalysis(BaseModel):
