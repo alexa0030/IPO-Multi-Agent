@@ -9,8 +9,25 @@ from ipo_financial_agent.tools.search import (
     SearchQuery,
     SearchService,
     TavilySearchProvider,
+    DDGSSearchProvider,
     build_due_diligence_queries,
 )
+
+
+def _configured_provider() -> tuple[Any | None, str, str]:
+    mode = os.getenv("IPO_SEARCH_PROVIDER", "auto").strip().lower()
+    if mode in {"off", "none", "disabled"}:
+        return None, "unavailable", "unavailable"
+    api_key = os.getenv("TAVILY_API_KEY", "").strip()
+    if api_key and mode in {"auto", "tavily"}:
+        return TavilySearchProvider(api_key), "tavily", "free_quota"
+    if mode != "ddgs":
+        return None, "unavailable", "unavailable"
+    try:
+        import ddgs  # noqa: F401
+    except ImportError:
+        return None, "unavailable", "unavailable"
+    return DDGSSearchProvider(), "ddgs", "free_best_effort"
 
 
 def search_industry_info(
@@ -18,12 +35,29 @@ def search_industry_info(
     business_description: str = "",
 ) -> list[dict[str, Any]]:
     """Return real, traceable search results or an empty list."""
-    api_key = os.getenv("TAVILY_API_KEY", "")
-    if not api_key:
+    provider, provider_name, cost_mode = _configured_provider()
+    if provider is None:
         return []
-    service = SearchService(TavilySearchProvider(api_key))
-    results = service.run(build_due_diligence_queries(company, business_description))
-    return [item.model_dump() for item in results]
+    max_queries = max(1, int(os.getenv("IPO_SEARCH_MAX_QUERIES", "8")))
+    if provider_name == "ddgs":
+        # Public engines throttle cloud IPs; keep the free fallback bounded.
+        max_queries = min(max_queries, 3)
+    report = SearchService(provider).run_report(
+        build_due_diligence_queries(company, business_description),
+        provider_name=provider_name,
+        cost_mode=cost_mode,
+        max_queries=max_queries,
+    )
+    return [
+        {
+            **item.model_dump(),
+            "search_provider": report.provider,
+            "search_cost_mode": report.cost_mode,
+            "covered_topics": report.covered_topics,
+            "missing_topics": report.missing_topics,
+        }
+        for item in report.results
+    ]
 
 
 def search_market_data(company: str) -> dict[str, Any]:
@@ -40,13 +74,16 @@ def search_market_data(company: str) -> dict[str, Any]:
 
 def search_targeted_followup(company: str, question: str) -> list[dict[str, Any]]:
     """Run one challenge-specific query when a provider is configured."""
-    api_key = os.getenv("TAVILY_API_KEY", "")
-    if not api_key:
+    provider, provider_name, cost_mode = _configured_provider()
+    if provider is None:
         return []
-    service = SearchService(TavilySearchProvider(api_key))
+    service = SearchService(provider)
     query = SearchQuery(
         query=f"{company} {question}",
         topic="targeted_followup",
         max_results=5,
     )
-    return [item.model_dump() for item in service.run([query])]
+    report = service.run_report(
+        [query], provider_name=provider_name, cost_mode=cost_mode, max_queries=1
+    )
+    return [item.model_dump() for item in report.results]

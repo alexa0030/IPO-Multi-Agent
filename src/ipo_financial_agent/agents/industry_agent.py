@@ -187,7 +187,8 @@ class IndustryAgent:
                     "publisher": result.get("publisher", ""),
                     "query": result.get("query", ""),
                     "source_scope": "external",
-                    "independently_verified": True,
+                    "independently_verified": False,
+                    "verification_status": "search_lead_requires_source_review",
                 },
             )
             for result in results

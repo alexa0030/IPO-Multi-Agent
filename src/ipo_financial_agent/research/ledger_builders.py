@@ -105,30 +105,74 @@ def industry_research_patch(result: IndustryAnalysis) -> ResearchPatch:
     if result.market_growth:
         parts.append(f"市场规模与增长：{result.market_growth}")
     conclusion = "\n".join(parts)
-    has_external = any(
-        item.metadata.get("source_scope") == "external" for item in result.evidence
-    )
+    external_evidence = [
+        item
+        for item in result.evidence
+        if item.metadata.get("source_scope") == "external" and item.source_url
+    ]
+    has_external = bool(external_evidence)
     findings = []
-    if conclusion:
+    issuer_evidence = [
+        item
+        for item in result.evidence
+        if item.metadata.get("source_scope") != "external"
+    ]
+    if conclusion and issuer_evidence:
         findings.append(
             Finding(
                 agent_name="industry_competition",
                 question="公司所处行业和竞争环境如何？",
                 conclusion=conclusion,
-                evidence_ids=[item.evidence_id for item in result.evidence],
-                evidence_strength="medium" if has_external else "weak",
-                open_questions=(
-                    []
-                    if has_external
-                    else ["招股书行业数据尚需独立行业来源交叉验证。"]
+                evidence_ids=[item.evidence_id for item in issuer_evidence],
+                evidence_strength="weak",
+                open_questions=["发行人披露尚需与对应外部原文逐项交叉验证。"],
+            )
+        )
+
+    industry_topics = {"industry", "competitors", "customers_suppliers", "policy"}
+    legal_topics = {
+        "hkex_filings",
+        "regulatory",
+        "corporate_registry",
+        "litigation",
+        "controller_related_parties",
+        "financing_debt",
+        "accounting_auditor",
+        "adverse_media",
+        "targeted_followup",
+    }
+    for item in external_evidence:
+        topic = str(item.metadata.get("topic", "external_research"))
+        agent_name = (
+            "legal_governance"
+            if topic in legal_topics
+            else "industry_competition"
+        )
+        source_tier = str(item.metadata.get("source_tier", "unknown"))
+        excerpt = " ".join(item.content.split())[:320]
+        findings.append(
+            Finding(
+                agent_name=agent_name,
+                question=f"公开信息检索是否发现 {topic} 相关核查线索？",
+                conclusion=(
+                    f"外部公开信息线索（{topic}）：{item.title}。"
+                    f"搜索摘要：{excerpt}"
                 ),
+                evidence_ids=[item.evidence_id],
+                evidence_strength=(
+                    "medium" if source_tier in {"official", "primary"} else "weak"
+                ),
+                risks=[topic] if agent_name == "legal_governance" else [],
+                open_questions=["打开并阅读原始 URL，核对全文、主体、日期和当前状态。"],
             )
         )
     return ResearchPatch(
         evidence=_deduplicate_evidence(result.evidence),
         findings=findings,
         open_questions=(
-            [] if has_external else ["招股书行业数据尚需独立行业来源交叉验证。"]
+            ["已取得外部搜索线索，但尚需逐条打开原始 URL 核验。"]
+            if has_external
+            else ["招股书行业数据尚需独立行业来源交叉验证。"]
         ),
     )
 

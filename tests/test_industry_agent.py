@@ -65,4 +65,8 @@ def test_external_evidence_is_labelled_separately(_search: object) -> None:
 
     assert result.evidence[0].source_type == "web"
     assert result.evidence[0].metadata["source_scope"] == "external"
-    assert result.evidence[0].metadata["independently_verified"] is True
+    assert result.evidence[0].metadata["independently_verified"] is False
+    assert (
+        result.evidence[0].metadata["verification_status"]
+        == "search_lead_requires_source_review"
+    )
