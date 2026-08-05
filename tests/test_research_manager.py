@@ -15,3 +15,19 @@ def test_mainline_a_default_plan_assigns_four_specialists() -> None:
     }
     assert all(task.question for task in plan.tasks)
     assert all(task.expected_evidence for task in plan.tasks)
+
+
+def test_plan_derives_company_specific_hypotheses_from_prospectus_signals() -> None:
+    plan = ResearchManagerAgent().plan(
+        company="Example Holdings",
+        document_summary={
+            "page_count": 500,
+            "section_count": 30,
+            "signal_texts": ["报告期内完成收购，存货及研发费用均发生变化。"],
+        },
+    )
+
+    assert any("并购" in item for item in plan.company_specific_hypotheses)
+    assert any("存货" in item for item in plan.company_specific_hypotheses)
+    assert any("研发" in item for item in plan.company_specific_hypotheses)
+    assert all("Priority company-specific hypotheses" in task.question for task in plan.tasks)

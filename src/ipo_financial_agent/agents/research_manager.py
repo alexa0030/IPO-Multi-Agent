@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import re
+import json
 from typing import Any, ClassVar
 
 from ipo_financial_agent.llm.client import OpenAICompatibleClient
@@ -39,12 +39,18 @@ class ResearchManagerAgent:
         company: str,
         document_summary: dict[str, Any],
     ) -> ResearchPlan:
+        hypotheses = ResearchManagerAgent._derive_hypotheses(document_summary)
+        hypothesis_suffix = (
+            " Priority company-specific hypotheses: " + "; ".join(hypotheses)
+            if hypotheses
+            else ""
+        )
         tasks = [
             ResearchTask(
                 agent_name="company_business",
                 question=(
                     f"{company} sells what, to whom, under which commercial model, "
-                    "and with what ownership and management structure?"
+                    "and with what ownership and management structure?" + hypothesis_suffix
                 ),
                 reason="Establish the inside-out company and business case.",
                 expected_evidence=[
@@ -58,7 +64,7 @@ class ResearchManagerAgent:
                 agent_name="financial_dd",
                 question=(
                     f"Has {company} generated sustainable earnings and cash without "
-                    "deteriorating working capital or leverage?"
+                    "deteriorating working capital or leverage?" + hypothesis_suffix
                 ),
                 reason="Test historical financial quality with deterministic calculations.",
                 expected_evidence=[
@@ -72,7 +78,7 @@ class ResearchManagerAgent:
                 agent_name="industry_competition",
                 question=(
                     f"Does {company}'s industry structure and competitive position "
-                    "support future earning power?"
+                    "support future earning power?" + hypothesis_suffix
                 ),
                 reason="Validate company claims with non-prospectus evidence.",
                 expected_evidence=[
@@ -86,7 +92,7 @@ class ResearchManagerAgent:
                 agent_name="legal_governance",
                 question=(
                     f"Does {company} disclose material legal, governance, related-party, "
-                    "controller, licensing, or adverse-information risks?"
+                    "controller, licensing, or adverse-information risks?" + hypothesis_suffix
                 ),
                 reason="Identify non-financial matters that may pause diligence.",
                 expected_evidence=[
@@ -110,7 +116,23 @@ class ResearchManagerAgent:
                 "future earning power",
                 "material negative risk",
             ],
+            company_specific_hypotheses=hypotheses,
         )
+
+    @staticmethod
+    def _derive_hypotheses(document_summary: dict[str, Any]) -> list[str]:
+        """Turn prospectus signals into questions, never conclusions."""
+        text = " ".join(document_summary.get("signal_texts", [])).lower()
+        rules = (
+            (("收购", "并购", "acquisition"), "并购是否改变报表口径、业务结构及商誉风险"),
+            (("研发", "research and development", "r&d"), "研发投入变化能否形成可持续产品与收入"),
+            (("客户集中", "五大客户", "largest customers"), "客户集中度及主要客户收入真实性是否可验证"),
+            (("存货", "inventory"), "存货变化能否由产销节奏、备货或并购范围合理解释"),
+            (("应收", "trade receivable"), "应收账款增长、账期与收入增长是否匹配"),
+            (("关联交易", "related party"), "关联交易是否具有必要性、公允性及持续影响"),
+            (("债务", "借款", "borrowings"), "短长期债务与现金偿付能力是否匹配"),
+        )
+        return [question for keywords, question in rules if any(k in text for k in keywords)][:5]
 
     def _plan_with_llm(
         self,
@@ -175,4 +197,5 @@ Return JSON with a tasks array. Each task contains agent, objective, priority.
             tasks=tasks,
             manager_notes=markdown[:500],
             focus_areas=[item.agent_name for item in tasks],
+            company_specific_hypotheses=cls._derive_hypotheses(document_summary),
         )

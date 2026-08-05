@@ -44,7 +44,8 @@ def _entity_lines(items: list[Any]) -> list[str]:
     lines: list[str] = []
     for item in items:
         citations = " ".join(
-            _evidence_label(entry) for entry in list(_value(item, "evidence", []) or [])
+            _evidence_label(entry)
+            for entry in list(_value(item, "evidence", []) or [])
         )
         detail = _value(item, "detail", "")
         suffix = f"：{detail}" if detail else ""
@@ -70,6 +71,7 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
     metrics = list(state.get("metrics", []) or [])
     challenges = list(state.get("challenges", []) or [])
     questions = list(state.get("diligence_questions", []) or [])
+    financial_findings = list(state.get("financial_findings", []) or [])
 
     lines = [
         f"# {company}港股 IPO 公司尽调报告",
@@ -89,7 +91,9 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
     ]
 
     business_model = _value(prospectus, "business_model", "")
-    business_evidence = list(_value(prospectus, "business_model_evidence", []) or [])
+    business_evidence = list(
+        _value(prospectus, "business_model_evidence", []) or []
+    )
     if business_model and business_evidence:
         lines.append(
             f"- 商业模式：{business_model} "
@@ -134,12 +138,40 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
             ]
         )
         for metric in metrics:
-            pages = ", ".join(f"P{page}" for page in _value(metric, "source_pages", []))
+            pages = ", ".join(
+                f"P{page}" for page in _value(metric, "source_pages", [])
+            )
             lines.append(
                 f"| {_value(metric, 'metric_name', '')} | "
                 f"{_value(metric, 'period', '')} | "
                 f"{_value(metric, 'display_value', '')} | {pages or '待补充'} |"
             )
+
+    lines.extend(["", "### 财务异常的解释状态", ""])
+    status_labels = {
+        "observation": "待解释观察",
+        "partially_explained": "部分解释",
+        "unexplained": "尚未解释",
+        "contradiction": "解释矛盾",
+    }
+    triggered = [item for item in financial_findings if _value(item, "triggered", False)]
+    if not triggered:
+        lines.append("- 暂无触发财务核查规则的事项。")
+    for item in triggered:
+        status = _value(item, "assessment_status", "observation")
+        lines.append(
+            f"- **{_value(item, 'rule_id', '')} / {status_labels.get(status, status)}**："
+            f"{_value(item, 'name', '')}。{_value(item, 'description', '')}"
+        )
+        explanations = list(_value(item, "possible_explanations", []) or [])
+        required = list(_value(item, "required_evidence", []) or [])
+        escalation = list(_value(item, "escalation_conditions", []) or [])
+        if explanations:
+            lines.append(f"  - 可能解释（待验证）：{'；'.join(explanations)}")
+        if required:
+            lines.append(f"  - 需要证据：{'；'.join(required)}")
+        if escalation:
+            lines.append(f"  - 升级为风险的条件：{'；'.join(escalation)}")
 
     lines.extend(["", "## 五、未来持续盈利能力", ""])
     company_findings = findings_by_agent.get("company_business", [])
@@ -195,9 +227,7 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
     lines.extend(["", "## 九、P0/P1/P2 补充尽调清单", ""])
     if questions:
         for priority in ("P0", "P1", "P2"):
-            selected = [
-                item for item in questions if _value(item, "priority") == priority
-            ]
+            selected = [item for item in questions if _value(item, "priority") == priority]
             if not selected:
                 continue
             lines.extend([f"### {priority}", ""])

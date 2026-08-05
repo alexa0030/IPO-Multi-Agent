@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import re
+import socket
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
-from ipo_financial_agent.agents.due_diligence_lead import DueDiligenceLeadAgent
 from ipo_financial_agent.agents.financial_agent import FinancialAnalysisAgent
+from ipo_financial_agent.agents.due_diligence_lead import DueDiligenceLeadAgent
 from ipo_financial_agent.agents.industry_agent import IndustryAgent
 from ipo_financial_agent.agents.legal_governance_agent import LegalGovernanceAgent
 from ipo_financial_agent.agents.prospectus_agent import ProspectusAgent
@@ -54,13 +56,14 @@ class IPOFinancialPipeline:
         if llm_mode not in {"auto", "on", "off"}:
             raise ValueError("llm_mode must be one of: auto, on, off")
         document_id = self._document_id(path)
+        effective_llm_mode = self._resolve_llm_mode(llm_mode)
         graph = build_graph(self._nodes())
         result = graph.invoke(
             {
                 "pdf_path": str(path),
                 "company": company,
                 "document_id": document_id,
-                "llm_mode": llm_mode,
+                "llm_mode": effective_llm_mode,
                 "agent_messages": [],
                 "research_evidence": [],
                 "research_findings": [],
@@ -138,12 +141,29 @@ class IPOFinancialPipeline:
             "page_count": len(state.get("pages", [])),
             "section_count": len(section_hits),
             "section_names": section_names,
+            "signal_texts": [
+                getattr(page, "text", "")[:2000]
+                for page in state.get("candidate_pages", [])[:24]
+            ],
         }
 
-        plan = agent.plan(
-            company=state["company"],
-            document_summary=document_summary,
-        )
+        try:
+            plan = agent.plan(
+                company=state["company"],
+                document_summary=document_summary,
+            )
+        except Exception as exc:
+            if state["llm_mode"] == "on":
+                raise
+            print(
+                f"[research-manager] LLM unavailable ({type(exc).__name__}); "
+                "falling back to deterministic company-specific plan.",
+                flush=True,
+            )
+            plan = ResearchManagerAgent().plan(
+                company=state["company"],
+                document_summary=document_summary,
+            )
         print(
             f"[research-manager] Plan created: {len(plan.tasks)} tasks, "
             f"focus={plan.focus_areas}",
@@ -161,6 +181,7 @@ class IPOFinancialPipeline:
                 "focus_areas": plan.focus_areas,
                 "page_count": document_summary["page_count"],
                 "section_count": document_summary["section_count"],
+                "company_specific_hypotheses": plan.company_specific_hypotheses,
             },
         )
 
@@ -514,39 +535,65 @@ class IPOFinancialPipeline:
         return {"challenges": challenges}
 
     def _run_targeted_followup(self, state: dict[str, Any]) -> dict[str, Any]:
-        """Run at most one scoped web follow-up; never claim an answer offline."""
+        """Route one bounded challenge round to prospectus retrieval or web search."""
         if not state.get("challenges"):
             return {"followup_round": state.get("followup_round", 0)}
         evidence: list[Evidence] = []
         unresolved: list[str] = []
+        messages: list[AgentMessage] = []
         for challenge in state.get("challenges", []):
-            if challenge.target_agent not in {
+            challenge_evidence: list[Evidence] = []
+            if challenge.target_agent in {
                 "industry_competition",
                 "legal_governance",
             }:
-                unresolved.append(challenge.question)
-                continue
-            results = search_targeted_followup(state["company"], challenge.question)
-            for result in results:
-                evidence.append(
-                    Evidence(
-                        source_type="web",
-                        title=result.get("title", ""),
-                        content=result.get("content", ""),
-                        source=result.get("url", ""),
-                        source_url=result.get("url"),
-                        published_at=result.get("published_at"),
-                        retrieved_at=result.get("retrieved_at"),
-                        confidence=float(result.get("confidence", 0.5)),
-                        metadata={
-                            "topic": "targeted_followup",
-                            "challenge_id": challenge.challenge_id,
-                            "source_tier": result.get("source_tier", "unknown"),
-                        },
+                results = search_targeted_followup(state["company"], challenge.question)
+                for result in results:
+                    challenge_evidence.append(
+                        Evidence(
+                            source_type="web",
+                            title=result.get("title", ""),
+                            content=result.get("content", ""),
+                            source=result.get("url", ""),
+                            source_url=result.get("url"),
+                            published_at=result.get("published_at"),
+                            retrieved_at=result.get("retrieved_at"),
+                            confidence=float(result.get("confidence", 0.5)),
+                            metadata={
+                                "topic": "targeted_followup",
+                                "challenge_id": challenge.challenge_id,
+                                "source_tier": result.get("source_tier", "unknown"),
+                            },
+                        )
+                    )
+            else:
+                challenge_evidence.extend(
+                    self._retrieve_prospectus_followup(
+                        pages=state.get("pages", []),
+                        question=challenge.question,
+                        challenge_id=challenge.challenge_id,
                     )
                 )
-            if not results:
+            evidence.extend(challenge_evidence)
+            if not challenge_evidence:
                 unresolved.append(challenge.question)
+            messages.append(
+                AgentMessage(
+                    sender=challenge.target_agent,
+                    receiver="DueDiligenceLead",
+                    content=(
+                        f"Challenge {challenge.challenge_id}: located "
+                        f"{len(challenge_evidence)} additional evidence items; "
+                        "the lead must still judge whether the explanation is sufficient."
+                    ),
+                    message_type="finding",
+                    payload={
+                        "challenge_id": challenge.challenge_id,
+                        "evidence_ids": [item.evidence_id for item in challenge_evidence],
+                        "resolved": False,
+                    },
+                )
+            )
         print(
             f"[targeted-followup] round=1, new_evidence={len(evidence)}, "
             f"unresolved={len(unresolved)}",
@@ -555,7 +602,44 @@ class IPOFinancialPipeline:
         return {
             "research_evidence": evidence,
             "followup_round": 1,
+            "agent_messages": messages,
         }
+
+    @staticmethod
+    def _retrieve_prospectus_followup(
+        *, pages: list[Any], question: str, challenge_id: str
+    ) -> list[Evidence]:
+        """Locate page-level leads for company/financial challenges without inventing an answer."""
+        lowered_question = question.lower()
+        tokens = set(re.findall(r"[a-zA-Z]{4,}", lowered_question))
+        domain_terms = {
+            "收入", "毛利", "利润", "现金", "应收", "应付", "存货", "负债",
+            "借款", "收购", "并购", "研发", "客户", "供应商", "返利", "关联交易",
+            "实控人", "股权", "产品", "市场", "竞争", "诉讼", "处罚", "牌照",
+        }
+        tokens.update(term for term in domain_terms if term in lowered_question)
+        stop = {"是否", "公司", "需要", "核实", "什么", "which", "what", "does", "company"}
+        tokens -= stop
+        ranked: list[tuple[int, Any]] = []
+        for page in pages:
+            text = getattr(page, "text", "") or ""
+            score = sum(1 for token in tokens if token in text.lower())
+            if score:
+                ranked.append((score, page))
+        result: list[Evidence] = []
+        for _, page in sorted(ranked, key=lambda item: item[0], reverse=True)[:3]:
+            text = (getattr(page, "text", "") or "").replace("\n", " ")
+            result.append(
+                Evidence(
+                    source_type="prospectus",
+                    title="质疑回路定向检索线索",
+                    content=text[:800],
+                    page_number=getattr(page, "page_number", None),
+                    confidence=0.65,
+                    metadata={"topic": "targeted_followup", "challenge_id": challenge_id},
+                )
+            )
+        return result
 
     def _run_due_diligence_lead(self, state: dict[str, Any]) -> dict[str, Any]:
         conclusion, questions = DueDiligenceLeadAgent().synthesize(
@@ -848,6 +932,29 @@ class IPOFinancialPipeline:
                 "llm_mode=on, but OPENAI_COMPATIBLE_API_KEY and OPENAI_COMPATIBLE_MODEL are not configured."
             )
         return self.settings.llm_configured
+
+    def _resolve_llm_mode(self, llm_mode: str) -> str:
+        """Make auto truly resilient: one cheap endpoint check before fan-out."""
+        if llm_mode != "auto" or not self.settings.llm_configured:
+            return llm_mode
+        raw_url = self.settings.llm_base_url or "https://api.openai.com/v1"
+        parsed = urlparse(raw_url if "://" in raw_url else f"http://{raw_url}")
+        host = parsed.hostname
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        if not host:
+            print("[llm-preflight] Invalid base URL; auto mode falls back to off.", flush=True)
+            return "off"
+        try:
+            with socket.create_connection((host, port), timeout=2):
+                print(f"[llm-preflight] Endpoint reachable: {host}:{port}", flush=True)
+                return "auto"
+        except OSError as exc:
+            print(
+                f"[llm-preflight] Endpoint unavailable ({type(exc).__name__}); "
+                "auto mode falls back to deterministic agents.",
+                flush=True,
+            )
+            return "off"
 
     @staticmethod
     def _document_id(path: Path) -> str:

@@ -3,6 +3,7 @@ from ipo_financial_agent.models_agent import (
     DueDiligenceConclusion,
     Evidence,
     Finding,
+    FinancialFinding,
 )
 from ipo_financial_agent.rendering import render_due_diligence_markdown
 
@@ -95,3 +96,32 @@ def test_financial_anomaly_is_not_rendered_as_company_strength() -> None:
         "## 九、P0/P1/P2 补充尽调清单", 1
     )[0]
     assert "Cash conversion declined to 0.59." not in conclusion_section
+
+
+def test_financial_trigger_renders_as_hypothesis_with_escalation_conditions() -> None:
+    report = render_due_diligence_markdown(
+        {
+            "company": "Example Holdings",
+            "research_evidence": [],
+            "research_findings": [],
+            "financial_findings": [
+                FinancialFinding(
+                    rule_id="AQ-002",
+                    name="存货增长较快",
+                    triggered=True,
+                    assessment_status="observation",
+                    possible_explanations=["并购纳入报表范围"],
+                    required_evidence=["合并口径桥接表"],
+                    escalation_conditions=["剔除并购后存货仍显著快于收入"],
+                )
+            ],
+            "diligence_questions": [],
+            "metrics": [],
+            "challenges": [],
+        }
+    )
+
+    assert "财务异常的解释状态" in report
+    assert "待解释观察" in report
+    assert "可能解释（待验证）：并购纳入报表范围" in report
+    assert "升级为风险的条件：剔除并购后存货仍显著快于收入" in report

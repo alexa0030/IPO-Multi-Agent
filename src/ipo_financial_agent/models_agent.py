@@ -88,6 +88,7 @@ class ResearchPlan(BaseModel):
     tasks: list[ResearchTask] = Field(default_factory=list)
     manager_notes: str = ""
     focus_areas: list[str] = Field(default_factory=list)
+    company_specific_hypotheses: list[str] = Field(default_factory=list)
 
 
 # ==================== Evidence (Unified) ====================
