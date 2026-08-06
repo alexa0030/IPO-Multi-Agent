@@ -178,7 +178,10 @@ class IPOFinancialPipeline:
         msg = AgentMessage(
             sender="ResearchManager",
             receiver="all",
-            content=plan.manager_notes,
+            content="\n".join(
+                [plan.manager_notes]
+                + [f"{task.agent_name}: {task.question}" for task in plan.tasks]
+            ),
             message_type="plan",
             payload={
                 "task_count": len(plan.tasks),
@@ -222,6 +225,11 @@ class IPOFinancialPipeline:
 
         # Extract triggered rule IDs for payload
         triggered_ids = [getattr(f, "rule_id", "") for f in triggered]
+        triggered_summary = "；".join(
+            f"{getattr(f, 'rule_id', '')} {getattr(f, 'name', '')}"
+            f"（{getattr(f, 'assessment_status', 'observation')}）"
+            for f in triggered[:6]
+        )
         patch = financial_research_patch(findings)
 
         print(
@@ -243,7 +251,8 @@ class IPOFinancialPipeline:
                 f"{len(result.get('extraction_result', FinancialExtractionResult()).statement_facts)} facts, "
                 f"{len(result.get('metrics', []))} metrics, "
                 f"{len(risks)} risk alerts, "
-                f"{len(findings)} forensic findings ({len(triggered)} triggered)."
+                f"{len(findings)} forensic findings ({len(triggered)} triggered). "
+                f"Triggered items: {triggered_summary or 'none'}."
             ),
             message_type="finding",
             payload={
@@ -327,12 +336,22 @@ class IPOFinancialPipeline:
         customers = result.customers or []
         key_claims = result.key_claims or []
         patch = prospectus_research_patch(result)
+        dossier_counts = {
+            topic: len(items)
+            for topic, items in result.dossier.topic_findings.items()
+        }
+        dossier_total = sum(dossier_counts.values())
+        dossier_preview = "；".join(
+            item.conclusion.replace("\n", "；")[:240]
+            for item in patch.findings[:3]
+        )
 
         print(
             f"[prospectus-agent] Done (Tool-Augmented): "
             f"products={len(products)}, "
             f"customers={len(customers)}, "
             f"management={len(result.management_team or [])}, "
+            f"dossier_findings={dossier_total}, "
             f"risks={len(result.prospectus_risks)}, "
             f"key_claims={len(key_claims)}",
             flush=True,
@@ -346,8 +365,10 @@ class IPOFinancialPipeline:
                 f"Prospectus analysis complete: "
                 f"products={len(products)}, "
                 f"customers={len(customers)}, "
+                f"dossier_findings={dossier_total}, "
                 f"risks={len(result.prospectus_risks)}, "
-                f"key_claims={len(key_claims)}."
+                f"key_claims={len(key_claims)}. "
+                f"Key output: {dossier_preview or result.business_model[:240] or 'insufficient evidence'}."
             ),
             message_type="finding",
             payload={
@@ -356,6 +377,8 @@ class IPOFinancialPipeline:
                 "product_count": len(products),
                 "customer_count": len(customers),
                 "risk_count": len(result.prospectus_risks),
+                "dossier_topic_counts": dossier_counts,
+                "ledger_finding_count": len(patch.findings),
             },
         )
 
@@ -384,6 +407,14 @@ class IPOFinancialPipeline:
             pages=state.get("pages", []),
         )
         patch = industry_research_patch(result)
+        web_evidence_count = sum(
+            1 for item in result.evidence if getattr(item, "source_type", "") == "web"
+        )
+        industry_preview = "；".join(
+            item.conclusion.replace("\n", "；")[:220]
+            for item in patch.findings[:3]
+            if item.agent_name == "industry_competition"
+        )
         print(
             f"[industry-agent] Done: "
             f"competitors={len(result.competitors)}, "
@@ -398,7 +429,9 @@ class IPOFinancialPipeline:
                 f"Industry analysis complete: "
                 f"competitors={len(result.competitors)}, "
                 f"trends={len(result.industry_trends)}, "
-                f"risks={len(result.industry_risks)}."
+                f"risks={len(result.industry_risks)}, "
+                f"web_evidence={web_evidence_count}. "
+                f"Key output: {industry_preview or 'external validation unavailable'}."
             ),
             message_type="finding",
             payload={
@@ -406,6 +439,8 @@ class IPOFinancialPipeline:
                 "trend_count": len(result.industry_trends),
                 "risk_count": len(result.industry_risks),
                 "has_market_data": bool(result.market_growth),
+                "web_evidence_count": web_evidence_count,
+                "ledger_finding_count": len(patch.findings),
             },
         )
 
@@ -425,6 +460,9 @@ class IPOFinancialPipeline:
             pages=state.get("pages", []),
         )
         patch = legal_governance_research_patch(result)
+        legal_preview = "；".join(
+            item.conclusion[:220] for item in patch.findings[:3]
+        )
         print(
             f"[legal-governance-agent] leads={len(result.evidence)}, "
             f"findings={len(patch.findings)}",
@@ -435,7 +473,8 @@ class IPOFinancialPipeline:
             receiver="DueDiligenceLead",
             content=(
                 f"Legal/governance surface review complete: "
-                f"{len(result.evidence)} page-level leads."
+                f"{len(result.evidence)} page-level leads. "
+                f"Key output: {legal_preview or 'no grounded lead found'}."
             ),
             message_type="finding",
             payload={
@@ -483,6 +522,8 @@ class IPOFinancialPipeline:
             financial_metrics=state.get("metrics", []),
             financial_findings=state.get("financial_findings", []),
             agent_messages=agent_messages,
+            research_findings=state.get("research_findings", []),
+            open_questions=state.get("open_questions", []),
         )
 
         # Handle both structured Contradiction objects and strings
@@ -508,6 +549,7 @@ class IPOFinancialPipeline:
                 f"contradictions={contradiction_count}, "
                 f"risk_matrix_items={risk_matrix_count}, "
                 f"questions={len(result.investment_questions)}."
+                f" Major items: {'；'.join(result.major_risks[:4]) or 'none'}."
             ),
             message_type="decision",
             payload={

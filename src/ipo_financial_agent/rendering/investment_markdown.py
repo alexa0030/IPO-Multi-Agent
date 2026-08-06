@@ -36,8 +36,25 @@ def _finding_lines(
             for evidence_id in item.evidence_ids
             if evidence_id in evidence
         )
-        lines.append(f"- {item.conclusion} {citations}".rstrip())
+        lines.append(
+            f"- **{item.question}**：{item.conclusion} {citations}".rstrip()
+        )
     return lines
+
+
+_VERDICT_LABELS = {
+    "proceed": "尽调未发现需暂停事项",
+    "conditional_proceed": "有条件继续尽调",
+    "pause": "暂停并补充关键核查",
+    "stop": "停止尽调",
+}
+_GRADE_LABELS = {
+    "strong": "较强",
+    "moderate": "中等",
+    "weak": "偏弱",
+    "insufficient_evidence": "证据不足",
+}
+_RISK_LABELS = {"Low": "低", "Medium": "中", "High": "高"}
 
 
 def _entity_lines(items: list[Any]) -> list[str]:
@@ -165,6 +182,64 @@ def _financial_statement_lines(state: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _financial_statement_summary_lines(state: dict[str, Any]) -> list[str]:
+    """Keep the analytical body compact; full extracted statements are an appendix."""
+    keywords = {
+        "balance_sheet": (
+            "现金", "货币资金", "应收", "存货", "流动资产", "总资产",
+            "应付", "借款", "流动负债", "总负债", "净资产", "权益",
+        ),
+        "income_statement": (
+            "收入", "营业收入", "销售成本", "毛利", "研发", "销售费用",
+            "行政费用", "经营利润", "税前利润", "净利润", "年内利润",
+        ),
+        "cash_flow_statement": (
+            "经营活动", "投资活动", "融资活动", "现金及现金等价物",
+            "资本开支", "所得税", "利息",
+        ),
+    }
+    tables = list(state.get("raw_statements", []) or [])
+    lines = [
+        "",
+        "### 三大报表核心科目摘要",
+        "",
+        "> 本节只展示投资尽调常用核心科目；完整招股书原表见附录A。",
+    ]
+    for statement_type, title in _STATEMENT_TITLES.items():
+        lines.extend(["", f"#### {title}核心科目", ""])
+        table = _select_primary_statement(tables, statement_type)
+        if table is None:
+            lines.append(f"- 未识别到{title}原表，禁止模型补造数字。")
+            continue
+        rows = [list(row) for row in (_value(table, "rows", []) or []) if row]
+        if not rows:
+            lines.append("- 未抽取到可展示行。")
+            continue
+        header_index = 0
+        for index, row in enumerate(rows[:8]):
+            joined = "".join(str(cell) for cell in row)
+            if sum(bool(str(cell).strip()) for cell in row) >= 2 and any(
+                token in joined for token in ("年", "月", "截至", "202", "201")
+            ):
+                header_index = index
+                break
+        selected = []
+        for row in rows[header_index + 1 :]:
+            item_name = str(row[0] if row else "")
+            if any(keyword in item_name for keyword in keywords[statement_type]):
+                selected.append(row)
+        selected = selected[:14]
+        if not selected:
+            selected = rows[header_index + 1 : header_index + 11]
+        compact_table = {
+            "rows": [rows[header_index], *selected],
+        }
+        pages = "、".join(f"P{page}" for page in (_value(table, "pages", []) or []))
+        lines.extend([f"- 来源：{pages or '页码待核验'}", ""])
+        lines.extend(_statement_table_lines(compact_table))
+    return lines
+
+
 def render_due_diligence_markdown(state: dict[str, Any]) -> str:
     """Keep facts, assessments, risks, and unanswered questions separate."""
     company = state.get("company", "未命名公司")
@@ -183,6 +258,19 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
     challenges = list(state.get("challenges", []) or [])
     questions = list(state.get("diligence_questions", []) or [])
     financial_findings = list(state.get("financial_findings", []) or [])
+    verdict = _value(conclusion, "verdict", "")
+    historical_grade = _value(
+        conclusion, "historical_financial_quality", "insufficient_evidence"
+    )
+    future_grade = _value(conclusion, "future_earning_power", "insufficient_evidence")
+    material_risk = _value(
+        conclusion,
+        "material_risk_level",
+        _value(risk_review, "risk_level", "未评定"),
+    )
+    key_strengths = list(_value(conclusion, "key_strengths", []) or [])
+    key_risks = list(_value(conclusion, "key_risks", []) or [])
+    p0_questions = [item for item in questions if _value(item, "priority") == "P0"]
 
     lines = [
         f"# {company}港股 IPO 公司尽调报告",
@@ -191,15 +279,31 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
         "",
         "## 一、尽调摘要",
         "",
-        f"- 综合结论：**{_value(conclusion, 'verdict', '尚未形成')}**",
-        f"- 历史财务质量：**{_value(conclusion, 'historical_financial_quality', 'insufficient_evidence')}**",
-        f"- 未来盈利能力：**{_value(conclusion, 'future_earning_power', 'insufficient_evidence')}**",
-        f"- 重大风险水平：**{_value(conclusion, 'material_risk_level', _value(risk_review, 'risk_level', '未评定'))}**",
+        f"- 尽调状态：**{_VERDICT_LABELS.get(verdict, verdict or '尚未形成')}**",
+        f"- 过去有没有钱（历史财务质量）：**{_GRADE_LABELS.get(historical_grade, historical_grade)}**",
+        f"- 未来会不会有钱（持续盈利能力）：**{_GRADE_LABELS.get(future_grade, future_grade)}**",
+        f"- 负面事项与重大风险：**{_RISK_LABELS.get(material_risk, material_risk)}**",
         f"- 已登记证据：{len(evidence_items)} 条；已验证发现：{len(findings)} 条；待补充尽调：{len(questions)} 条",
         "",
-        "## 二、公司概况、股权与商业模式",
+        "### 摘要要点",
         "",
     ]
+    lines.extend(
+        [f"- 已验证优势/支撑：{item}" for item in key_strengths[:3]]
+        or ["- 已验证优势/支撑：当前证据不足，暂不作正面判断。"]
+    )
+    lines.extend(
+        [f"- 重点风险/异常：{item}" for item in key_risks[:3]]
+        or ["- 重点风险/异常：暂无已升级为重大风险的结构化事项。"]
+    )
+    lines.extend(
+        [
+            f"- P0 核查问题：{len(p0_questions)} 项。",
+            "",
+            "## 二、公司概况、股权与商业模式",
+            "",
+        ]
+    )
 
     business_model = _value(prospectus, "business_model", "")
     business_evidence = list(
@@ -268,7 +372,7 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
             "暂无通过 Evidence Ledger 校验的财务异常结论。",
         )
     )
-    lines.extend(_financial_statement_lines(state))
+    lines.extend(_financial_statement_summary_lines(state))
     if metrics:
         lines.extend(
             [
@@ -357,12 +461,23 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
         )
 
     lines.extend(["", "## 八、综合尽调判断", ""])
+    company_profile = _value(conclusion, "company_profile", "")
+    if company_profile:
+        lines.append(f"- 公司画像：{company_profile}")
     lines.extend(
-        [f"- 核心优势：{item}" for item in _value(conclusion, "key_strengths", [])]
+        [
+            f"- 历史财务判断：{_GRADE_LABELS.get(historical_grade, historical_grade)}。",
+            f"- 持续盈利判断：{_GRADE_LABELS.get(future_grade, future_grade)}。",
+            f"- 重大风险判断：{_RISK_LABELS.get(material_risk, material_risk)}。",
+            f"- 结论置信度：{float(_value(conclusion, 'confidence', 0.0) or 0.0):.0%}。",
+        ]
+    )
+    lines.extend(
+        [f"- 核心优势：{item}" for item in key_strengths]
         or ["- 核心优势尚缺少充分证据。"]
     )
     lines.extend(
-        [f"- 核心风险：{item}" for item in _value(conclusion, "key_risks", [])]
+        [f"- 核心风险：{item}" for item in key_risks]
         or ["- 暂无结构化核心风险摘要。"]
     )
 
@@ -404,6 +519,8 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
             f"| {item.evidence_id} | {item.source_type} | "
             f"{title} | {location} | {item.confidence:.2f} |"
         )
+    lines.extend(["", "## 附录A：三大财务报表原表", ""])
+    lines.extend(_financial_statement_lines(state))
     lines.extend(
         [
             "",

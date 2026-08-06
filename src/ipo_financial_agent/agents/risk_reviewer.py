@@ -21,6 +21,7 @@ from ipo_financial_agent.llm.prompts_agents import RISK_REVIEW_SYSTEM_PROMPT
 from ipo_financial_agent.models_agent import (
     AgentMessage,
     Contradiction,
+    Finding,
     RiskMatrixItem,
     RiskReview,
 )
@@ -121,6 +122,8 @@ class RiskReviewerAgent:
         financial_metrics: list | None = None,
         financial_findings: list | None = None,
         agent_messages: list[AgentMessage] | None = None,
+        research_findings: list[Finding] | None = None,
+        open_questions: list[str] | None = None,
     ) -> RiskReview:
         # --- Collect all inputs ---
         prospectus_text = self._get_prospectus_text(prospectus_analysis)
@@ -129,6 +132,7 @@ class RiskReviewerAgent:
         fin_findings = self._summarize_findings(financial_findings)
         triggered_findings = [f for f in fin_findings if f.get("triggered")]
         finding_messages = self._extract_finding_messages(agent_messages)
+        ledger_risks = self._summarize_ledger_risks(research_findings)
 
         if self.client is not None:
             return self._llm_review(
@@ -139,6 +143,9 @@ class RiskReviewerAgent:
                 fin_risks,
                 fin_findings,
                 finding_messages,
+                financial_metrics or [],
+                ledger_risks,
+                open_questions or [],
             )
 
         # --- Offline mode: real analytical logic ---
@@ -151,19 +158,22 @@ class RiskReviewerAgent:
         )
 
         risk_matrix = self._build_risk_matrix(
-            fin_risks, triggered_findings, contradictions
+            fin_risks, triggered_findings, contradictions, ledger_risks
         )
 
         investment_questions = self._generate_questions(
             triggered_findings,
             contradictions,
             fin_risks,
+            open_questions or [],
         )
 
-        risk_level = self._determine_risk_level(risk_matrix, contradictions)
+        risk_level = self._determine_risk_level(
+            risk_matrix, contradictions, triggered_findings
+        )
 
         major_risks = self._extract_major_risks(
-            fin_risks, triggered_findings, contradictions
+            fin_risks, triggered_findings, contradictions, ledger_risks
         )
 
         markdown = self._build_markdown(
@@ -286,31 +296,18 @@ class RiskReviewerAgent:
                         source_1="ProspectusAgent",
                         statement_1="招股书声称客户多元化",
                         source_2="FinancialAgent",
-                        statement_2="应收账款增速远超收入增速，存在大客户压货风险",
+                        statement_2="应收账款增速远超收入增速，收入增长的回款质量需核对",
                         severity="warning",
-                        question="请说明客户多元化声明与应收账款异常增长的矛盾。",
+                        question=(
+                            "请按客户、账龄、信用期和报告期后回款拆解应收增长，"
+                            "并核对并购口径、业务结构或结算周期变化能否充分解释。"
+                        ),
                     )
                 )
 
-        # --- Rule 5: Market leadership vs industry data ---
-        if _has_claim(prospectus_text, "leadership") and industry_text:
-            competitors_mentioned = bool(
-                re.search(
-                    r"竞争|对手|排名|rival|competitor", industry_text, re.IGNORECASE
-                )
-            )
-            if competitors_mentioned:
-                contradictions.append(
-                    Contradiction(
-                        type="red_flag",
-                        source_1="ProspectusAgent",
-                        statement_1="招股书声称行业领先/龙头地位",
-                        source_2="IndustryAgent",
-                        statement_2="行业分析显示存在多个主要竞争对手，市场地位需进一步验证",
-                        severity="warning",
-                        question="请提供市场份额数据验证行业领先地位的声明。",
-                    )
-                )
+        # The existence of competitors does not contradict a leadership claim.
+        # Market position is kept as an evidence gap until a dated independent
+        # market-share source actually refutes the issuer's statement.
 
         # --- Rule 6: Forensic finding cross-checks ---
         for f in findings:
@@ -344,6 +341,7 @@ class RiskReviewerAgent:
         fin_risks: list[dict],
         triggered_findings: list[dict],
         contradictions: list[Contradiction],
+        ledger_risks: list[dict] | None = None,
     ) -> list[RiskMatrixItem]:
         """Build a probability x impact risk matrix from all sources."""
         matrix: list[RiskMatrixItem] = []
@@ -415,6 +413,29 @@ class RiskReviewerAgent:
                 )
             )
 
+        for item in ledger_risks or []:
+            agent_name = item.get("agent_name", "")
+            impact = "High" if agent_name == "legal_governance" else "Medium"
+            is_pending_lead = item.get("pending_verification", False)
+            probability = "Low" if is_pending_lead else (
+                "Medium" if item.get("evidence_strength") in {"strong", "medium"}
+                else "Low"
+            )
+            matrix.append(
+                RiskMatrixItem(
+                    risk_name=item.get("title", "跨专业核查事项"),
+                    category=(
+                        f"{agent_name}_verification"
+                        if is_pending_lead
+                        else agent_name or "cross_agent"
+                    ),
+                    probability=probability,
+                    impact=impact,
+                    score=self._calc_score(probability, impact),
+                    evidence_refs=item.get("evidence_ids", [])[:3],
+                )
+            )
+
         # Sort by score descending
         matrix.sort(key=lambda x: x.score, reverse=True)
         return matrix[:15]  # Top 15
@@ -423,14 +444,14 @@ class RiskReviewerAgent:
 
     # Question templates keyed by rule_id
     _QUESTION_TEMPLATES: ClassVar[dict[str, str]] = {
-        "AQ-001": "请说明应收账款增速远超收入增速的原因，是否存在大客户压货或收入确认提前的情形？",
-        "AQ-002": "请说明存货周转率下降但毛利率上升的合理性，是否少结转成本虚增毛利？",
-        "AQ-003": "请说明在建工程长期不转固的原因，是否存在延迟计提折旧或通过工程款转移资金？",
+        "AQ-001": "请先按并购口径、客户、账龄、信用期及期后回款拆解应收增长；若正常业务变化不足以解释，再核查压货或收入确认时点。",
+        "AQ-002": "请先用并购口径、产品结构、原材料价格、返利及减值计提解释存货周转与毛利率变化；若桥接后仍异常，再核查成本结转完整性。",
+        "AQ-003": "请提供在建工程项目、预算、进度和转固条件；若工程进度与转固时点不匹配，再核查折旧计提及资金往来。",
         "AQ-004": "请说明应收账款及存货合计占比超30%的合理性，资产质量是否支撑IPO估值？",
         "AQ-005": "请说明预付账款占比超20%的具体构成，是否存在长期挂账未核销项目？",
         "AQ-006": "请说明其他应收款余额构成及对手方，是否存在关联方资金占用？",
-        "AQ-007": "请说明商誉占比超10%的被收购方业绩达标情况，是否存在大额减值风险？",
-        "AQ-008": "请说明开发支出资本化的依据及比例，是否符合会计准则？",
+        "AQ-007": "请提供被收购方业绩承诺、实际完成、估值模型及商誉减值测试，核对并购是否真实贡献收入和现金流。",
+        "AQ-008": "请按项目说明研发支出资本化条件、时点和比例，并与可比公司及研发里程碑交叉核对。",
         "AQ-009": "请说明固定资产周转率下降但净利润上升的合理性，是否存在费用资本化？",
         "EQ-001": "请说明经营现金流净额长期低于净利润的原因，利润是否已转化为真实现金流入？",
         "EQ-002": "请说明销售回款率（收现比）持续偏低的理由，主要客户的信用期是否合理？",
@@ -450,6 +471,7 @@ class RiskReviewerAgent:
         triggered_findings: list[dict],
         contradictions: list[Contradiction],
         fin_risks: list[dict],
+        open_questions: list[str] | None = None,
     ) -> list[str]:
         """Generate buy-side due diligence questions from all findings."""
         questions: list[str] = []
@@ -478,10 +500,15 @@ class RiskReviewerAgent:
                     questions.append(q)
                     seen.add(q)
 
+        for question in open_questions or []:
+            if question and question not in seen:
+                questions.append(question)
+                seen.add(question)
+
         # 4. Standard IPO due diligence questions
         standard = [
-            "请说明IPO募集资金的具体用途及预期回报率。",
             "请提供前五大客户及供应商的集中度数据及关联关系说明。",
+            "请提供短期及长期借款、担保、抵押和主要偿债安排明细。",
         ]
         for q in standard:
             if q not in seen:
@@ -496,13 +523,21 @@ class RiskReviewerAgent:
         self,
         risk_matrix: list[RiskMatrixItem],
         contradictions: list[Contradiction],
+        triggered_findings: list[dict] | None = None,
     ) -> str:
         """Determine overall risk level from matrix and contradictions."""
         high_count = sum(1 for r in risk_matrix if r.score >= 6)
         critical_contradictions = sum(1 for c in contradictions if c.severity == "high")
-        if high_count >= 3 or critical_contradictions >= 2:
+        triggered = triggered_findings or []
+        unresolved_high = sum(
+            1
+            for item in triggered
+            if item.get("severity") in {"high", "critical"}
+            and item.get("assessment_status") in {"unexplained", "contradiction"}
+        )
+        if high_count >= 3 or critical_contradictions >= 2 or unresolved_high >= 1:
             return "High"
-        elif high_count >= 1 or critical_contradictions >= 1:
+        elif high_count >= 1 or critical_contradictions >= 1 or triggered:
             return "Medium"
         else:
             return "Low"
@@ -605,19 +640,47 @@ class RiskReviewerAgent:
         ]
 
     @staticmethod
+    def _summarize_ledger_risks(findings: list[Finding] | None) -> list[dict]:
+        output: list[dict] = []
+        for finding in findings or []:
+            if not finding.risks:
+                continue
+            output.append(
+                {
+                    "title": f"[{finding.agent_name}] {finding.conclusion[:120]}",
+                    "agent_name": finding.agent_name,
+                    "evidence_strength": finding.evidence_strength,
+                    "evidence_ids": finding.evidence_ids,
+                    "risks": finding.risks,
+                    "pending_verification": all(
+                        str(risk).startswith("待核实") for risk in finding.risks
+                    ),
+                }
+            )
+        return output[:20]
+
+    @staticmethod
     def _extract_major_risks(
         fin_risks: list[dict],
         triggered_findings: list[dict],
         contradictions: list[Contradiction],
+        ledger_risks: list[dict] | None = None,
     ) -> list[str]:
         major: list[str] = []
         for r in fin_risks[:5]:
             if r.get("assessment_status") != "observation":
                 major.append(r["title"])
         for f in triggered_findings[:5]:
-            if f.get("assessment_status") == "observation":
-                continue
-            name = f"[{f.get('rule_id', '')}] {f.get('name', '')}"
+            prefix = (
+                "待核实财务异常"
+                if f.get("assessment_status") == "observation"
+                else "财务风险"
+            )
+            name = f"[{prefix}/{f.get('rule_id', '')}] {f.get('name', '')}"
+            if name not in major:
+                major.append(name)
+        for item in (ledger_risks or [])[:5]:
+            name = f"[跨专业待核实] {item.get('title', '')}"
             if name not in major:
                 major.append(name)
         for c in contradictions[:3]:
@@ -704,6 +767,9 @@ class RiskReviewerAgent:
         fin_risks: list[dict],
         fin_findings: list[dict],
         finding_messages: list[dict],
+        financial_metrics: list[Any],
+        ledger_risks: list[dict],
+        open_questions: list[str],
     ) -> RiskReview:
         """LLM-enhanced review: offline logic + LLM interpretation."""
         # Run offline logic first
@@ -714,12 +780,16 @@ class RiskReviewerAgent:
         contradictions = self._detect_contradictions(
             prospectus_text,
             prospectus_analysis,
-            None,
+            financial_metrics,
             fin_findings,  # metrics not available in this path
             industry_text,
         )
-        risk_matrix = self._build_risk_matrix(fin_risks, triggered, contradictions)
-        risk_level = self._determine_risk_level(risk_matrix, contradictions)
+        risk_matrix = self._build_risk_matrix(
+            fin_risks, triggered, contradictions, ledger_risks
+        )
+        risk_level = self._determine_risk_level(
+            risk_matrix, contradictions, triggered
+        )
 
         # Build LLM context
         context = {
@@ -737,6 +807,7 @@ class RiskReviewerAgent:
                 for c in contradictions
             ],
             "agent_finding_messages": finding_messages[:5],
+            "cross_specialist_risk_findings": ledger_risks[:8],
         }
 
         prompt = (
@@ -758,14 +829,18 @@ class RiskReviewerAgent:
         )
 
         # Merge LLM output with offline analysis
-        questions = self._generate_questions(triggered, contradictions, fin_risks)
+        questions = self._generate_questions(
+            triggered, contradictions, fin_risks, open_questions
+        )
 
         return RiskReview(
             company=company,
             risk_level=risk_level,
             contradictions=contradictions,
             risk_matrix=risk_matrix,
-            major_risks=self._extract_major_risks(fin_risks, triggered, contradictions),
+            major_risks=self._extract_major_risks(
+                fin_risks, triggered, contradictions, ledger_risks
+            ),
             investment_questions=questions,
             raw_markdown=markdown,
         )

@@ -17,6 +17,18 @@ def _complete_report() -> str:
 
 ## 公司概况、股权与商业模式
 事实 [ev_12345678 | 招股书 P10]
+### 公司沿革、股权与控制权
+事实待核验。
+### 融资、并购及重大资本事件
+事实待核验。
+### 产品、服务与商业模式
+事实待核验。
+### 客户与供应商
+事实待核验。
+### 研发、生产、销售、交付与回款
+事实待核验。
+### 子公司、经营主体与管理层
+事实待核验。
 ## 行业与竞争
 证据不足，待联网核验。
 ## 历史财务表现与盈利质量
@@ -80,3 +92,19 @@ def test_llm_reviewer_score_is_recomputed_from_authoritative_issue_ledger() -> N
     )
     assert review.passed is True
     assert review.score == 97
+
+
+def test_reviewer_excerpt_samples_late_sections_in_long_report() -> None:
+    report = (
+        "# 长报告\n\n"
+        "## 一、公司概况、股权与商业模式\n"
+        + "公司正文。" * 8000
+        + "\n## 二、行业与竞争\n行业正文。"
+        + "\n## 附录A：三大财务报表原表\n### 现金流量表\n期末现金。"
+    )
+
+    excerpt = EvidenceComplianceReviewerAgent._review_excerpt(report)
+
+    assert len(excerpt) <= 30000
+    assert "行业与竞争" in excerpt
+    assert "现金流量表" in excerpt

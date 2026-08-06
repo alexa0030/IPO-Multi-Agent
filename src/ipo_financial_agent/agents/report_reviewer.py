@@ -18,6 +18,15 @@ REQUIRED_SECTIONS = (
     "综合尽调判断",
 )
 
+REQUIRED_COMPANY_SUBSECTIONS = (
+    "公司沿革、股权与控制权",
+    "融资、并购及重大资本事件",
+    "产品、服务与商业模式",
+    "客户与供应商",
+    "研发、生产、销售、交付与回款",
+    "子公司、经营主体与管理层",
+)
+
 REQUIRED_FINANCIAL_STATEMENTS = (
     "资产负债表",
     "利润表",
@@ -55,8 +64,8 @@ class EvidenceComplianceReviewerAgent:
 
 只返回 ReportReview JSON。revision_instructions 必须可执行、简短；不要重写报告。
 
-待审报告：
-{report[:30000]}
+待审报告（各章节均匀抽样，附录不因正文过长而丢失）：
+{self._review_excerpt(report)}
 """
         try:
             reviewed = self.client.complete_json(
@@ -108,7 +117,11 @@ class EvidenceComplianceReviewerAgent:
     def _deterministic_review(report: str) -> ReportReview:
         missing = [
             section
-            for section in (*REQUIRED_SECTIONS, *REQUIRED_FINANCIAL_STATEMENTS)
+            for section in (
+                *REQUIRED_SECTIONS,
+                *REQUIRED_COMPANY_SUBSECTIONS,
+                *REQUIRED_FINANCIAL_STATEMENTS,
+            )
             if section not in report
         ]
         scope: list[str] = []
@@ -150,3 +163,17 @@ class EvidenceComplianceReviewerAgent:
                 "确定性终审通过。" if passed else "确定性终审发现需修订事项。"
             ),
         )
+
+    @staticmethod
+    def _review_excerpt(report: str, max_chars: int = 30000) -> str:
+        """Sample every H2 section so the LLM reviewer sees the whole report."""
+        matches = list(re.finditer(r"^##\s+.+$", report, re.MULTILINE))
+        if not matches or len(report) <= max_chars:
+            return report[:max_chars]
+        per_section = max(1200, max_chars // (len(matches) + 1))
+        chunks = [report[: min(matches[0].start(), 1800)]]
+        for index, match in enumerate(matches):
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(report)
+            section = report[match.start() : end]
+            chunks.append(section[:per_section])
+        return "\n\n[章节抽样分隔]\n\n".join(chunks)[:max_chars]

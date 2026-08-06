@@ -1,9 +1,12 @@
 from ipo_financial_agent.models_agent import (
+    CompanyBusinessDossier,
+    CompanyDossierFinding,
     DiligenceQuestion,
     DueDiligenceConclusion,
     Evidence,
     Finding,
     FinancialFinding,
+    ProspectusAnalysis,
 )
 from ipo_financial_agent.models import RawStatementTable
 from ipo_financial_agent.rendering import render_due_diligence_markdown
@@ -71,6 +74,57 @@ def test_markdown_does_not_invent_industry_facts_without_external_evidence() -> 
 
     assert "尚无招股书之外的行业证据" in report
     assert "行业保持稳定增长" not in report
+
+
+def test_company_dossier_survives_from_agent_output_to_report() -> None:
+    topic_statements = {
+        "history_ownership": "控股股东持有本公司多数表决权。",
+        "capital_events": "报告期内完成一项业务收购。",
+        "products_business_model": "公司销售工业软件并收取软件及服务费。",
+        "customers_suppliers": "前五大客户收入占比已披露。",
+        "operations": "研发、销售、交付及回款由不同团队负责。",
+        "subsidiaries_management": "主要经营活动由境内子公司承担。",
+    }
+    topic_findings = {}
+    for index, (topic, statement) in enumerate(topic_statements.items(), start=50):
+        topic_findings[topic] = [
+            CompanyDossierFinding(
+                topic=topic,
+                statement=statement,
+                evidence=[
+                    Evidence(
+                        source_type="prospectus",
+                        page_number=index,
+                        content=statement,
+                    )
+                ],
+            )
+        ]
+    prospectus = ProspectusAnalysis(
+        company="示例公司",
+        dossier=CompanyBusinessDossier(
+            company="示例公司",
+            topic_findings=topic_findings,
+            open_questions=["请核验主要客户报告期后留存情况。"],
+        ),
+    )
+
+    report = render_due_diligence_markdown(
+        {
+            "company": "示例公司",
+            "prospectus_analysis": prospectus,
+            "research_evidence": [],
+            "research_findings": [],
+            "diligence_questions": [],
+            "metrics": [],
+            "challenges": [],
+        }
+    )
+
+    for statement in topic_statements.values():
+        assert statement in report
+    assert "公司与业务补充核查问题" in report
+    assert "请核验主要客户报告期后留存情况。" in report
 
 
 def test_financial_anomaly_is_not_rendered_as_company_strength() -> None:
