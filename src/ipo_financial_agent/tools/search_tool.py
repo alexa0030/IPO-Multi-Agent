@@ -12,6 +12,8 @@ from ipo_financial_agent.tools.search import (
     DDGSSearchProvider,
     build_due_diligence_queries,
 )
+from ipo_financial_agent.tools.search.fetcher import fetch_source
+from ipo_financial_agent.tools.search.models import SearchQuery
 
 
 def _configured_provider() -> tuple[Any | None, str, str]:
@@ -59,16 +61,28 @@ def search_industry_info(
         cost_mode=cost_mode,
         max_queries=max_queries,
     )
-    return [
-        {
-            **item.model_dump(),
-            "search_provider": report.provider,
-            "search_cost_mode": report.cost_mode,
-            "covered_topics": report.covered_topics,
-            "missing_topics": report.missing_topics,
-        }
-        for item in report.results
-    ]
+    output: list[dict[str, Any]] = []
+    max_sources = max(1, int(os.getenv("IPO_SEARCH_MAX_FETCHED_SOURCES", "20")))
+    for item in report.results[:max_sources]:
+        lead = item.model_dump()
+        try:
+            fetched = fetch_source(item.url)
+        except Exception as error:
+            lead["fetch_error"] = f"{type(error).__name__}: {error}"
+            continue
+        lead.update(fetched)
+        lead.update(
+            {
+                "search_provider": report.provider,
+                "search_cost_mode": report.cost_mode,
+                "covered_topics": report.covered_topics,
+                "missing_topics": report.missing_topics,
+                "source_scope": "external",
+                "verification_status": "fetched_source_pending_claim_match",
+            }
+        )
+        output.append(lead)
+    return output
 
 
 def search_legal_governance_info(company: str) -> list[dict[str, Any]]:
@@ -139,3 +153,26 @@ def search_targeted_followup(company: str, question: str) -> list[dict[str, Any]
         [query], provider_name=provider_name, cost_mode=cost_mode, max_queries=1
     )
     return [item.model_dump() for item in report.results]
+
+
+def search_legal_entities(queries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Search enabled legal entities with a separate bounded budget."""
+    provider, provider_name, cost_mode = _configured_provider()
+    if provider is None:
+        return []
+    max_queries = max(1, int(os.getenv("IPO_LEGAL_ENTITY_MAX_QUERIES", "20")))
+    selected = queries[:max_queries]
+    search_queries = [SearchQuery(query=item["query"], topic=getattr(item.get("research_topic"), "value", str(item.get("research_topic"))), domains=item.get("domains", []), priority=item.get("priority", "P1")) for item in selected]
+    report = SearchService(provider).run_report(search_queries, provider_name=provider_name, cost_mode=cost_mode, max_queries=max_queries)
+    query_meta = {item["query"]: item for item in selected}
+    results: list[dict[str, Any]] = []
+    for item in report.results[:20]:
+        lead = item.model_dump()
+        meta = query_meta.get(item.query, {})
+        try:
+            lead.update(fetch_source(item.url))
+        except Exception:
+            continue
+        lead.update({"entity_id": meta.get("entity_id"), "entity_name": meta.get("entity_name"), "search_provider": report.provider, "search_cost_mode": report.cost_mode})
+        results.append(lead)
+    return results

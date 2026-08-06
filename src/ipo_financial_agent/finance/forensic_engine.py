@@ -552,7 +552,7 @@ class FinancialForensicEngine:
         """EQ-002: Cash-to-revenue ratio persistently below 0.5."""
         ocf_map = fact_map.get("operating_cash_flow", {})
         rev_map = fact_map.get("revenue", {})
-        periods = _sort_periods([p for p in ocf_map if p in rev_map])
+        periods = _sort_periods([p for p in ocf_map.keys() if p in rev_map])
 
         if not periods:
             return self._insufficient("EQ-002", "收现比持续低于0.5", self.CAT_EARNINGS, 1,

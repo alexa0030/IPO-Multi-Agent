@@ -50,4 +50,3 @@ class TavilySearchProvider:
             except ValueError:
                 continue
         return output
-

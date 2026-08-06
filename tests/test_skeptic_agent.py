@@ -39,15 +39,9 @@ def test_skeptic_prioritizes_contradictions_and_caps_challenges() -> None:
 def test_skeptic_routes_chinese_financial_and_market_questions() -> None:
     agent = SkepticAgent()
 
-    assert (
-        agent._target_for_text("\u6838\u5bf9\u6536\u5165\u4e0e\u73b0\u91d1\u6d41")
-        == "financial_dd"
-    )
+    assert agent._target_for_text("\u6838\u5bf9\u6536\u5165\u4e0e\u73b0\u91d1\u6d41") == "financial_dd"
     assert (
         agent._target_for_text("\u641c\u7d22\u884c\u4e1a\u5e02\u573a\u4efd\u989d")
         == "industry_competition"
     )
-    assert (
-        agent._target_for_text("\u6838\u67e5\u8bc9\u8bbc\u548c\u76d1\u7ba1\u5904\u7f5a")
-        == "legal_governance"
-    )
+    assert agent._target_for_text("\u6838\u67e5\u8bc9\u8bbc\u548c\u76d1\u7ba1\u5904\u7f5a") == "legal_governance"

@@ -172,6 +172,7 @@ class Finding(BaseModel):
     evidence_strength: EvidenceStrength = "medium"
     risks: list[str] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
+    finding_nature: Literal["strength", "risk", "mixed", "neutral_observation"] = "neutral_observation"
 
     @model_validator(mode="after")
     def identify_and_deduplicate(self) -> Self:

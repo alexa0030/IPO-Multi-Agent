@@ -305,6 +305,11 @@ JSON 格式：
                     "source_scope": "external",
                     "independently_verified": False,
                     "verification_status": "search_lead_requires_source_review",
+                    "final_url": result.get("final_url", result.get("url", "")),
+                    "http_status": result.get("http_status"),
+                    "content_type": result.get("content_type", ""),
+                    "content_hash": result.get("content_hash", ""),
+                    "extraction_method": result.get("extraction_method", ""),
                 },
             )
             for result in results
