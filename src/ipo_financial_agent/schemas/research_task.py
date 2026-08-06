@@ -42,9 +42,9 @@ class ResearchQuestion(BaseModel):
     question: str = Field(min_length=1)
     reason: str = Field(min_length=1)
     priority: Priority
-    expected_evidence: list[str] = Field(default_factory=list)
+    expected_evidence: list[str] = Field(min_length=1)
     research_topic: FinancialResearchTopic
-    completion_criteria: list[str] = Field(default_factory=list)
+    completion_criteria: list[str] = Field(min_length=1)
 
     @field_validator("expected_evidence")
     @classmethod

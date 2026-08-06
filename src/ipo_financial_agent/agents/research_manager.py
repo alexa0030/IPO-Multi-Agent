@@ -57,6 +57,7 @@ class ResearchManagerAgent:
                         "经营现金流与净利润比率",
                     ],
                     research_topic="profit_cash_conversion",
+                    completion_criteria=["存在净现比计算证据", "形成利润现金转化判断"],
                 ),
                 ContractResearchQuestion(
                     question_id="Q_FA_02",
@@ -65,6 +66,7 @@ class ResearchManagerAgent:
                     priority="P0",
                     expected_evidence=["应收账款", "营业收入", "应收账款增长率"],
                     research_topic="receivable_revenue_match",
+                    completion_criteria=["存在收入和应收账款增长率计算证据", "形成增速匹配判断"],
                 ),
                 ContractResearchQuestion(
                     question_id="Q_FA_03",
@@ -73,6 +75,7 @@ class ResearchManagerAgent:
                     priority="P0",
                     expected_evidence=["存货", "营业收入", "存货增长率"],
                     research_topic="inventory_revenue_match",
+                    completion_criteria=["存在收入和存货增长率计算证据", "形成增速匹配判断"],
                 ),
                 ContractResearchQuestion(
                     question_id="Q_FA_04",
@@ -81,6 +84,7 @@ class ResearchManagerAgent:
                     priority="P1",
                     expected_evidence=["销售费用", "营业收入", "销售费用率"],
                     research_topic="selling_expense_quality",
+                    completion_criteria=["存在销售费用率计算证据", "形成审慎判断"],
                 ),
             ],
             pdf_topics=["财务资料", "贸易应收款项", "存货", "现金流量表"],

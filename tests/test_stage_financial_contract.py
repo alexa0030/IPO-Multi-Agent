@@ -8,7 +8,7 @@ from ipo_financial_agent.research.financial_contract_adapter import (
     register_financial_evidence,
 )
 from ipo_financial_agent.research.fixed_financial_task import build_fixed_financial_task
-from ipo_financial_agent.schemas import FinancialAgentResult
+from ipo_financial_agent.schemas import FinancialAgentResult, ResearchQuestion
 
 
 def _inputs():
@@ -73,3 +73,29 @@ def test_question_finding_evidence_links_are_bidirectionally_consistent():
         for finding_id in mapping.finding_ids:
             assert mapping.question_id in finding_by_id[finding_id].answered_question_ids
         assert set(mapping.evidence_ids) <= evidence_ids
+
+
+def test_financial_agent_consumes_manager_question_ids_and_extra_topic():
+    task = build_fixed_financial_task().model_copy(deep=True)
+    task.task_id = "MANAGER_TASK_DYNAMIC"
+    for index, question in enumerate(task.questions, start=101):
+        question.question_id = f"DYNAMIC_Q_{index}"
+    task.questions.append(ResearchQuestion(
+        question_id="DYNAMIC_Q_201",
+        research_topic="selling_expense_quality",
+        question="销售费用率变化是否由可验证的市场拓展活动支持？",
+        reason="区分增长投入与获客效率变化。",
+        priority="P1",
+        expected_evidence=["销售费用率", "销售费用明细"],
+        completion_criteria=["存在计算证据", "形成审慎判断"],
+    ))
+    facts, metrics, rules = _inputs()
+    result = build_financial_agent_result(
+        task=task, rules=rules,
+        evidence=register_financial_evidence(facts=facts, metrics=metrics), metrics=metrics,
+    )
+    assert result.completion_status == "completed"
+    assert {item.question_id for item in result.question_answer_map} == {
+        "DYNAMIC_Q_101", "DYNAMIC_Q_102", "DYNAMIC_Q_103", "DYNAMIC_Q_201"
+    }
+    assert all(item.status == "answered" for item in result.question_answer_map)

@@ -3,6 +3,17 @@
 from .evidence import Evidence
 from .financial_result import CompletionCheck, FinancialAgentResult, QuestionAnswerMapping
 from .finding import Finding
+from .manager import (
+    CompanyResearchProfile,
+    ManagerContext,
+    ManagerFinancialRunResult,
+    ManagerFinancialSummary,
+    ManagerObservation,
+    ManagerPlanArtifact,
+    ManagerTrendPoint,
+    ManagerValidationResult,
+    ResearchPlan,
+)
 from .follow_up import FollowUpRequest
 from .research_task import (
     BASELINE_FINANCIAL_TOPICS,
@@ -21,6 +32,15 @@ __all__ = [
     "CompletionCheck",
     "QuestionAnswerMapping",
     "Finding",
+    "CompanyResearchProfile",
+    "ManagerContext",
+    "ManagerFinancialRunResult",
+    "ManagerFinancialSummary",
+    "ManagerObservation",
+    "ManagerPlanArtifact",
+    "ManagerTrendPoint",
+    "ManagerValidationResult",
+    "ResearchPlan",
     "FollowUpRequest",
     "IPOResearchState",
     "ResearchQuestion",
