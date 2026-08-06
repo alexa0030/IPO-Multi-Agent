@@ -125,6 +125,7 @@ python scripts/smoke_search.py "示例股份有限公司"
 
 ```text
 data/extracted/<document_id>/
+├── document.json
 ├── pages.json
 ├── raw_statements.json
 ├── financial_kb.json
@@ -137,12 +138,18 @@ data/extracted/<document_id>/
 └── run_summary.json
 
 data/output/
+├── <document_id>/
+│   ├── IPO_Due_Diligence_Report.md
+│   ├── IPO_Due_Diligence_Report.xlsx
+│   ├── evidence.json
+│   ├── agent_trace.json
+│   └── delivery_manifest.json
 ├── <document_id>_due_diligence_report.md
 ├── <document_id>_financial_report.md
 └── <document_id>_financial_workbook.xlsx
 ```
 
-`raw_statements.json` 与 Excel 保留原始科目；Markdown 中的三表由文档层还原，不让 LLM 重新生成数字。报告中每条研究结论引用 Evidence ID、招股书页码或真实 URL。
+`data/output/<document_id>/` 是稳定的用户交付包。Excel 除完整财务底稿外，还包含尽调结论、Research Evidence、Research Findings、补充尽调清单和 Agent Trace；`evidence.json` 在导出前执行 Evidence → Finding 引用完整性校验。`raw_statements.json` 与 Excel 保留原始科目；Markdown 中的三表由文档层还原，不让 LLM 重新生成数字。
 
 ## 验证
 
@@ -171,4 +178,4 @@ python -m pytest -q
 - [FinnewsHunter](https://github.com/DemonDamon/FinnewsHunter)：新闻检索与金融情报信号；
 - [CryptoTradingAgents](https://github.com/Tomortec/CryptoTradingAgents)：结构化多角色消息和协作轨迹。
 
-更多实现细节见 `docs/architecture.md`。
+更多实现细节见 `docs/architecture.md`；产品边界、阶段对比和路线图见 `docs/PRD.md`。

@@ -55,7 +55,7 @@ def test_markdown_renders_mainline_a_conclusion_and_follow_up() -> None:
 
     assert "# Example Holdings港股 IPO 公司尽调报告" in report
     assert f"{evidence.evidence_id} | 招股书 P78" in report
-    assert "## 九、P0/P1/P2 补充尽调清单" in report
+    assert "## 十、补充尽调清单" in report
     assert "Provide top-five customer retention data." in report
     assert "投资金额、估值上限或退出建议" in report
 
@@ -147,8 +147,8 @@ def test_financial_anomaly_is_not_rendered_as_company_strength() -> None:
         }
     )
 
-    conclusion_section = report.split("## 八、综合尽调判断", 1)[1].split(
-        "## 九、P0/P1/P2 补充尽调清单", 1
+    conclusion_section = report.split("## 九、综合判断", 1)[1].split(
+        "## 十、补充尽调清单", 1
     )[0]
     assert "Cash conversion declined to 0.59." not in conclusion_section
 
@@ -220,3 +220,32 @@ def test_markdown_renders_three_original_financial_statements() -> None:
     assert "#### 现金流量表" in report
     assert "来源：P100" in report
     assert "| 经营活动现金流 | 100 | 80 |" in report
+
+
+def test_markdown_uses_prd_v2_eleven_section_contract() -> None:
+    report = render_due_diligence_markdown(
+        {
+            "company": "示例公司",
+            "research_evidence": [],
+            "research_findings": [],
+            "diligence_questions": [],
+            "metrics": [],
+            "challenges": [],
+        }
+    )
+
+    required = (
+        "## 一、投资摘要",
+        "## 二、公司基本情况",
+        "## 三、股权和治理",
+        "## 四、商业模式分析",
+        "## 五、行业和竞争",
+        "## 六、财务分析",
+        "## 七、盈利质量分析",
+        "## 八、风险分析",
+        "## 九、综合判断",
+        "## 十、补充尽调清单",
+        "## 十一、财务报表附录",
+    )
+    positions = [report.index(section) for section in required]
+    assert positions == sorted(positions)

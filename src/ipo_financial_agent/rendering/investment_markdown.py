@@ -203,7 +203,7 @@ def _financial_statement_summary_lines(state: dict[str, Any]) -> list[str]:
         "",
         "### 三大报表核心科目摘要",
         "",
-        "> 本节只展示投资尽调常用核心科目；完整招股书原表见附录A。",
+        "> 本节只展示投资尽调常用核心科目；完整招股书原表见第十一节。",
     ]
     for statement_type, title in _STATEMENT_TITLES.items():
         lines.extend(["", f"#### {title}核心科目", ""])
@@ -277,7 +277,7 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
         "",
         "> 本报告由 Research Ledger 确定性渲染。结论必须引用招股书页码、计算结果或真实外部 URL；本报告不包含投资金额、估值上限或退出建议。",
         "",
-        "## 一、尽调摘要",
+        "## 一、投资摘要",
         "",
         f"- 尽调状态：**{_VERDICT_LABELS.get(verdict, verdict or '尚未形成')}**",
         f"- 过去有没有钱（历史财务质量）：**{_GRADE_LABELS.get(historical_grade, historical_grade)}**",
@@ -300,11 +300,48 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
         [
             f"- P0 核查问题：{len(p0_questions)} 项。",
             "",
-            "## 二、公司概况、股权与商业模式",
+            "## 二、公司基本情况",
             "",
         ]
     )
 
+    lines.extend(["### 主要产品与服务", ""])
+    lines.extend(_entity_lines(list(_value(prospectus, "main_products", []) or [])))
+    lines.extend(["", "### 客户与供应商概览", ""])
+    lines.extend(_entity_lines(list(_value(prospectus, "customers", []) or [])))
+    lines.extend(_entity_lines(list(_value(prospectus, "suppliers", []) or [])))
+
+    topic_findings = _value(dossier, "topic_findings", {}) or {}
+
+    def append_dossier_topic(topic: str, title: str) -> None:
+        lines.extend(["", f"### {title}", ""])
+        items = topic_findings.get(topic, [])
+        if not items:
+            lines.append("- 尚未形成经页码校验的详细底稿。")
+            return
+        for item in items:
+            labels = {
+                "fact": "披露事实",
+                "company_explanation": "公司解释",
+                "analyst_inference": "分析判断",
+            }
+            citations = " ".join(
+                _evidence_label(entry)
+                for entry in (_value(item, "evidence", []) or [])
+            )
+            kind = labels.get(_value(item, "finding_type", "fact"), "披露事实")
+            lines.append(
+                f"- **{kind}**：{_value(item, 'statement', '')} {citations}".rstrip()
+            )
+
+    lines.extend(["", "## 三、股权和治理", ""])
+    append_dossier_topic("history_ownership", "公司沿革、股权与控制权")
+    append_dossier_topic("capital_events", "融资、并购及重大资本事件")
+    append_dossier_topic("subsidiaries_management", "子公司、经营主体与管理层")
+    lines.extend(["", "### 管理层", ""])
+    lines.extend(_entity_lines(list(_value(prospectus, "management_team", []) or [])))
+
+    lines.extend(["", "## 四、商业模式分析", ""])
     business_model = _value(prospectus, "business_model", "")
     business_evidence = list(
         _value(prospectus, "business_model_evidence", []) or []
@@ -316,46 +353,14 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
         )
     else:
         lines.append("- 商业模式尚未形成具备页码证据的结论。")
-    topic_titles = {
-        "history_ownership": "公司沿革、股权与控制权",
-        "capital_events": "融资、并购及重大资本事件",
-        "products_business_model": "产品、服务与商业模式",
-        "customers_suppliers": "客户与供应商",
-        "operations": "研发、生产、销售、交付与回款",
-        "subsidiaries_management": "子公司、经营主体与管理层",
-    }
-    topic_findings = _value(dossier, "topic_findings", {}) or {}
-    for topic, title in topic_titles.items():
-        lines.extend(["", f"### {title}", ""])
-        items = topic_findings.get(topic, [])
-        if not items:
-            lines.append("- 尚未形成经页码校验的详细底稿。")
-            continue
-        for item in items:
-            labels = {
-                "fact": "披露事实",
-                "company_explanation": "公司解释",
-                "analyst_inference": "分析判断",
-            }
-            citations = " ".join(
-                _evidence_label(entry) for entry in (_value(item, "evidence", []) or [])
-            )
-            kind = labels.get(_value(item, "finding_type", "fact"), "披露事实")
-            lines.append(f"- **{kind}**：{_value(item, 'statement', '')} {citations}".rstrip())
+    append_dossier_topic("products_business_model", "产品、服务与收入形成")
+    append_dossier_topic("customers_suppliers", "客户与供应链")
+    append_dossier_topic("operations", "研发、生产、销售、交付与回款")
     dossier_questions = list(_value(dossier, "open_questions", []) or [])
     if dossier_questions:
         lines.extend(["", "### 公司与业务补充核查问题", ""])
         lines.extend(f"- {item}" for item in dossier_questions)
-    for title, field in (
-        ("主要产品与服务", "main_products"),
-        ("客户", "customers"),
-        ("供应商", "suppliers"),
-        ("管理层", "management_team"),
-    ):
-        lines.extend(["", f"### {title}", ""])
-        lines.extend(_entity_lines(list(_value(prospectus, field, []) or [])))
-
-    lines.extend(["", "## 三、行业与竞争", ""])
+    lines.extend(["", "## 五、行业和竞争", ""])
     lines.extend(
         _finding_lines(
             findings_by_agent.get("industry_competition", []),
@@ -364,7 +369,7 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
         )
     )
 
-    lines.extend(["", "## 四、历史财务表现与盈利质量", ""])
+    lines.extend(["", "## 六、财务分析", ""])
     lines.extend(
         _finding_lines(
             findings_by_agent.get("financial_dd", []),
@@ -393,7 +398,7 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
                 f"{_value(metric, 'display_value', '')} | {pages or '待补充'} |"
             )
 
-    lines.extend(["", "### 财务异常的解释状态", ""])
+    lines.extend(["", "## 七、盈利质量分析", "", "### 财务异常的解释状态", ""])
     status_labels = {
         "observation": "待解释观察",
         "partially_explained": "部分解释",
@@ -419,7 +424,7 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
         if escalation:
             lines.append(f"  - 升级为风险的条件：{'；'.join(escalation)}")
 
-    lines.extend(["", "## 五、未来持续盈利能力", ""])
+    lines.extend(["", "### 未来持续盈利能力", ""])
     company_findings = findings_by_agent.get("company_business", [])
     lines.extend(
         _finding_lines(
@@ -431,7 +436,7 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
     if not findings_by_agent.get("industry_competition"):
         lines.append("- 缺少外部行业与竞争证据，暂不能验证公司增长叙述。")
 
-    lines.extend(["", "## 六、法务、合规、治理与负面事项", ""])
+    lines.extend(["", "## 八、风险分析", "", "### 法务、合规、治理与负面事项", ""])
     lines.extend(
         _finding_lines(
             findings_by_agent.get("legal_governance", []),
@@ -441,7 +446,7 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
     )
     lines.append("- 上述内容仅为审查线索，不构成法律意见。")
 
-    lines.extend(["", "## 七、跨 Agent 冲突与重大风险", ""])
+    lines.extend(["", "### 跨 Agent 冲突与重大风险", ""])
     contradictions = list(_value(risk_review, "contradictions", []) or [])
     if contradictions:
         for item in contradictions:
@@ -460,7 +465,7 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
             f"{_value(item, 'question', '')}"
         )
 
-    lines.extend(["", "## 八、综合尽调判断", ""])
+    lines.extend(["", "## 九、综合判断", ""])
     company_profile = _value(conclusion, "company_profile", "")
     if company_profile:
         lines.append(f"- 公司画像：{company_profile}")
@@ -481,7 +486,7 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
         or ["- 暂无结构化核心风险摘要。"]
     )
 
-    lines.extend(["", "## 九、P0/P1/P2 补充尽调清单", ""])
+    lines.extend(["", "## 十、补充尽调清单", "", "### P0/P1/P2 优先级", ""])
     if questions:
         for priority in ("P0", "P1", "P2"):
             selected = [item for item in questions if _value(item, "priority") == priority]
@@ -504,7 +509,7 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "## 十、证据索引",
+            "## 附录A：证据索引",
             "",
             "| Evidence ID | 类型 | 标题 | 页码/URL | 置信度 |",
             "|---|---|---|---|---:|",
@@ -519,7 +524,7 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
             f"| {item.evidence_id} | {item.source_type} | "
             f"{title} | {location} | {item.confidence:.2f} |"
         )
-    lines.extend(["", "## 附录A：三大财务报表原表", ""])
+    lines.extend(["", "## 十一、财务报表附录", ""])
     lines.extend(_financial_statement_lines(state))
     lines.extend(
         [

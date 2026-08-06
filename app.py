@@ -80,14 +80,35 @@ if st.button("开始处理", type="primary", disabled=uploaded is None or not co
         st.metric("证据条数", artifacts.metadata.get("research_evidence_count", 0))
 
     with st.expander("Agent 执行轨迹", expanded=True):
-        messages_path = Path(artifacts.metadata.get("agent_messages_json", ""))
+        messages_path = Path(artifacts.agent_trace_json or "")
         if messages_path.is_file():
-            messages = json.loads(messages_path.read_text(encoding="utf-8"))
+            trace_payload = json.loads(messages_path.read_text(encoding="utf-8"))
+            messages = trace_payload.get("messages", [])
             for item in messages:
                 st.markdown(
                     f"**{item.get('sender', 'Agent')} → {item.get('receiver', 'all')}** "
                     f"`{item.get('message_type', 'info')}`  \n{item.get('content', '')}"
                 )
+
+    with st.expander("Evidence → Finding 证据链", expanded=True):
+        evidence_path = Path(artifacts.evidence_json or "")
+        if evidence_path.is_file():
+            evidence_payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+            integrity = evidence_payload.get("integrity", {})
+            st.success("证据链完整性校验通过") if integrity.get("passed") else st.error(
+                "证据链完整性校验失败"
+            )
+            st.dataframe(
+                evidence_payload.get("evidence", []),
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.markdown("#### Findings")
+            st.dataframe(
+                evidence_payload.get("findings", []),
+                use_container_width=True,
+                hide_index=True,
+            )
 
     with st.expander("终审详情", expanded=False):
         review_path = Path(artifacts.metadata.get("report_review_json", ""))
@@ -96,20 +117,36 @@ if st.button("开始处理", type="primary", disabled=uploaded is None or not co
 
     with st.expander("全部运行元数据", expanded=False):
         st.json(artifacts.metadata)
-    excel_path = Path(artifacts.excel_path)
-    final_report = artifacts.metadata.get("final_report_path") or artifacts.report_path
+    excel_path = Path(artifacts.due_diligence_workbook_path or artifacts.excel_path)
+    final_report = artifacts.final_report_path or artifacts.report_path
     report_path = Path(final_report) if final_report else None
     st.download_button(
-        "下载 Excel 底稿",
+        "下载 IPO_Due_Diligence_Report.xlsx",
         data=excel_path.read_bytes(),
         file_name=excel_path.name,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
     if report_path and report_path.is_file():
         st.download_button(
-            "下载 Markdown 报告",
+            "下载 IPO_Due_Diligence_Report.md",
             data=report_path.read_bytes(),
             file_name=report_path.name,
             mime="text/markdown",
         )
         st.markdown(report_path.read_text(encoding="utf-8"))
+    evidence_path = Path(artifacts.evidence_json or "")
+    if evidence_path.is_file():
+        st.download_button(
+            "下载 evidence.json",
+            data=evidence_path.read_bytes(),
+            file_name="evidence.json",
+            mime="application/json",
+        )
+    trace_path = Path(artifacts.agent_trace_json or "")
+    if trace_path.is_file():
+        st.download_button(
+            "下载 agent_trace.json",
+            data=trace_path.read_bytes(),
+            file_name="agent_trace.json",
+            mime="application/json",
+        )
