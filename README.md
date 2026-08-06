@@ -1,181 +1,198 @@
-# HK IPO Due Diligence Multi-Agent
+# IPO Research Agent
 
-面向港股 IPO 的证据驱动多 Agent 公司尽调系统。输入公司名称与招股书 PDF，系统模拟一支投资团队，输出公司与股权、业务与商业模式、行业竞争、三大财务报表、盈利质量、法务治理、公开负面线索、交叉质疑和补充尽调清单。
+面向港股 IPO 招股书的 Evidence-grounded Multi-Agent 尽职调查系统。输入公司名称和招股书 PDF，系统完成文档解析、确定性财务分析、公司与业务研究、行业与竞争验证、法律治理审阅、跨 Agent 复核，并输出可追溯的 Markdown/JSON/Excel 研究材料。
 
-本项目不是“让一个大模型总结 PDF”。PDF 抽取、财务计算和证据校验由确定性代码完成；Agent 在统一 Research Ledger 上协作，任何结论都必须回到招股书页码、计算底稿或真实 URL。证据不足时保留问题，不生成模拟新闻或数字。
+> 当前定位：v0.8 Engineering MVP。项目用于研究辅助、工程演示和多 Agent 金融文档分析实验，不构成投资、法律或审计意见。
 
-## 运行闭环
+## 核心原则
+
+- **确定性优先**：PDF 抽取、三表重建、指标计算、风险规则、引用校验由代码完成；Qwen 负责解释和组织语言。
+- **Evidence-first**：Finding 必须引用 PDF 页码、计算证据或已抓取并登记的网页原文；搜索摘要只能作为待核实线索。
+- **结构化协作**：Agent 之间通过 Pydantic Schema、Research Task、Finding、Evidence、Review Topic 和 Report Material Pack 传递结果。
+- **正负面平衡**：报告同时保留业务事实、优势、风险、混合判断、证据缺口和后续核查问题。
+- **失败可降级**：Manager、搜索、Topic Reviewer 或章节生成失败时，仅降级当前节点，并在产物中保留状态和错误。
+- **隐私安全**：真实 PDF、API Key、数据库和运行输出不进入 Git；仓库只保留代码、模板和示例配置。
+
+## 工作流
 
 ```mermaid
-flowchart LR
-    PDF["公司名 + 招股书 PDF"] --> DOC["Document Pipeline\n页面/章节/原表"]
-    DOC --> PM["Research Manager\n规划与委派"]
-    PM --> C["Company & Business"]
-    PM --> F["Financial DD"]
-    PM --> I["Industry & Competition"]
-    PM --> L["Legal & Governance"]
-    C --> IC["Risk Reviewer / IC"]
-    F --> IC
-    I --> IC
-    L --> IC
-    IC --> S["Skeptic\n反证与最多一轮补证"]
-    S --> DDL["Due Diligence Lead"]
-    DDL --> W["Report Writer"]
-    W --> R["Evidence & Compliance Reviewer"]
-    R --> OUT["Markdown + Excel + JSON + SQLite"]
+flowchart TD
+    A[公司名称 + 招股书 PDF] --> B[Document Pipeline]
+    B --> C[Research Manager]
+    C --> D[Financial Agent]
+    C --> E[Company & Business Agent]
+    C --> F[Industry & Competition Agent]
+    C --> G[Legal & Governance Agent]
+    D --> H[Report Material Pack V0]
+    E --> H
+    F --> H
+    G --> H
+    H --> I[Coverage Gate]
+    I --> J[Topic Review Packets]
+    J --> K[Qwen Topic Reviewer]
+    K --> L[Deterministic Topic Validator]
+    L --> M[Final Synthesis]
+    M --> N[Final Review Validator]
+    N --> O[Report Material Pack V1]
+    O --> P[Section Material Router]
+    P --> Q[Deterministic Renderer]
+    P --> R[Qwen Section Writer]
+    Q --> S[Section Validator]
+    R --> S
+    S --> T[Final Report Assembler]
+    T --> U[Markdown + JSON + Excel]
 ```
 
-九个公开角色及其可审计交接：
+## Agent 职责
 
-| 角色 | 核心职责 | 主要产物 |
-|---|---|---|
-| ResearchManager | 将“过去/现在有没有钱、未来会不会有钱、有没有重大负面”拆成任务 | `ResearchPlan` |
-| CompanyBusinessAgent | 股权、产品、技术路线、商业模式、客户供应商、管理层 | `ProspectusAnalysis` |
-| FinancialAgent | 三表抽取、指标计算、异常解释、财务取证 | `FinancialAnalysis` |
-| IndustryAgent | 行业空间、上下游、竞争位置、护城河、增长瓶颈与公开搜索 | `IndustryAnalysis` |
-| LegalGovernanceAgent | 实控人、关联交易、诉讼处罚、许可与治理线索 | `LegalGovernanceAnalysis` |
-| RiskReviewer + Skeptic | 跨 Agent 对照、反方质疑、最多三项关键补证 | `RiskReview + Challenges` |
-| DueDiligenceLead | 汇总历史财务质量、未来盈利能力与重大风险 | `DueDiligenceConclusion` |
-| ReportWriter | 只基于已验证状态装配 Markdown，不改写长财务表 | `Markdown report` |
-| EvidenceComplianceReviewer | 检查必备章节、三表、引用、越界内容与无依据结论 | `ReportReview` |
+| 模块 | 主要职责 |
+|---|---|
+| Research Manager | 基于只读 Manager Context 生成研究任务；校验失败时显式降级到固定任务 |
+| Financial Agent | 三表、指标、现金转化、应收/存货匹配和财务风险规则分析 |
+| Company & Business Agent | 公司历史、产品、商业模式、客户、供应商、技术和增长计划 |
+| Industry & Competition Agent | Web-first 行业规模、产业链、竞争格局、壁垒、政策和周期验证 |
+| Legal & Governance Agent | 实控人、股权、子公司、关联方、诉讼、处罚、执行和治理事项 |
+| Topic Reviewer | 按投资主题对多个 Agent 的 Finding 做正面/负面/缺口复核 |
+| Final Synthesis | 综合历史财务质量、未来盈利能力和重大负面事项 |
+| Report Pipeline | 生成章节材料、逐章写作、验证、组装最终报告 |
 
-LangGraph 在安装时并行执行四个专业分支；没有 LangGraph 时使用相同数据契约顺序执行。Skeptic 最多触发一轮补证，避免 Agent 无限循环。
+## 证据和数据契约
 
-## 已实现能力
+核心对象位于 `src/ipo_financial_agent/schemas/`：
 
-- 保留 PDF 原文件、物理页码、逐页文本与原始表格，不修改输入 PDF；
-- 自动定位资产负债表、利润表、现金流量表及权益变动表；
-- 最终 Markdown 直接展示三大报表原表，并同时导出完整 Excel、JSON、SQLite；
-- Python 计算收入增长、毛利率、净利率、费用率、现金转换、流动比率等指标；
-- 6 条基础风险规则与 20 条财务法证规则，规则命中只视为调查线索；
-- 异常项区分“观察、部分解释、未解释、解释矛盾”，可登记并购、融资、研发、会计口径等解释证据；
-- 统一 `Evidence → Finding → Challenge → Conclusion` 数据契约和 Agent 消息轨迹；
-- 公开信息检索覆盖港交所、监管、诉讼、实控人、客户供应商、审计、行业、竞品与负面媒体；
-- Tavily 稳定 API 与 DDGS 零 Key 回退；搜索摘要只标为线索，必须打开原始 URL 核验；
-- 最终 Evidence/Compliance Reviewer 与一次有界修订；
-- OpenAI-compatible 模型接口，已验证本地 vLLM + Qwen；无模型时可完整离线运行。
+- `Evidence`：PDF 页码、URL、发布主体、日期、摘要或计算过程。
+- `Finding`：研究陈述、解释、性质（`strength`/`risk`/`mixed`/`neutral_observation`）、置信度和 Evidence 引用。
+- `ResearchTask` / `ResearchQuestion`：任务边界、稳定 `question_id`、`research_topic` 和期望证据。
+- `TopicReviewResult`：跨 Agent 一致性、正面因素、负面因素、Evidence Gap 和补充核查。
+- `FinalSynthesis`：`pass`、`conditional_pass`、`needs_follow_up`、`high_risk` 或 `failed` 等确定性状态。
+- `ReportMaterialPack`：报告章节可访问的事实、Finding、证据和数字边界。
 
-系统不提供建议投资金额、估值上限、退出期限或目标收益率；它生成公司尽调材料，不生成交易指令。
+财务数字只能来自已登记的表格、指标和计算 Evidence；模型不得创造、修改或重新计算数字。无法确认的事项使用 `unable_to_verify`、`insufficient_evidence` 或 `manual_required`。
+
+## 项目结构
+
+```text
+ipo_product_closure/
+├── main.py                         # CLI 入口
+├── app.py                          # Streamlit 入口
+├── pyproject.toml
+├── requirements.txt
+├── .env.example                    # 脱敏配置模板
+├── scripts/                        # 审计、流水线和 smoke 脚本
+├── src/ipo_financial_agent/
+│   ├── agents/                     # 各专业 Agent
+│   ├── document/                   # PDF 页面、章节和主题定位
+│   ├── extraction/                 # 原始表格与财务抽取
+│   ├── finance/                    # 指标、取证和风险规则
+│   ├── ledger/                     # Evidence/Finding 登记
+│   ├── research/                   # Manager Context、任务和实体注册
+│   ├── review/                     # Topic Reviewer 与 Final Synthesis
+│   ├── report/                     # 材料包、章节路由、Validator、组装
+│   ├── schemas/                    # Pydantic 数据契约
+│   ├── tools/search/               # Tavily/DDGS/网页抓取抽象
+│   └── workflow/                   # 各阶段流水线
+├── data/                           # 运行时目录（真实数据不提交）
+├── docs/                           # 架构和 PRD 文档
+└── tests/
+```
 
 ## 快速开始
 
-建议 Python 3.10–3.12。
+推荐 Python 3.10–3.12：
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev,ui,search]'
-cp .env.example .env
+# Windows: .venv\Scripts\activate
+# Linux/macOS: source .venv/bin/activate
+pip install -e ".[dev,ui,search]"
+copy .env.example .env       # Windows
 ```
 
-离线 CLI：
+离线运行（不调用模型）：
 
 ```bash
-python main.py \
-  --pdf "data/uploads/prospectus.pdf" \
-  --company "示例股份有限公司" \
-  --llm-mode off
+python main.py --pdf "data/uploads/prospectus.pdf" --company "示例公司" --llm-mode off
 ```
 
-本地 OpenAI-compatible 模型：
+连接本地 Qwen/vLLM（OpenAI-compatible API）：
 
 ```env
 OPENAI_COMPATIBLE_API_KEY=local-key
 OPENAI_COMPATIBLE_BASE_URL=http://127.0.0.1:8000/v1
-OPENAI_COMPATIBLE_MODEL=qwen3.5-4b
+OPENAI_COMPATIBLE_MODEL=qwen-local
 ```
 
-随后使用 `--llm-mode auto` 或 `--llm-mode on`。`auto` 在模型配置缺失时安全降级，`on` 会直接报告配置错误。
-
-Streamlit 演示：
+然后运行：
 
 ```bash
+python main.py --pdf "data/uploads/prospectus.pdf" --company "示例公司" --llm-mode auto
 streamlit run app.py --server.address 0.0.0.0 --server.port 8501
 ```
 
-页面可查看虚拟团队、Agent 执行轨迹、终审详情，并下载最终 Markdown 和 Excel 底稿。模型权重不进入 Git；部署时通过 OpenAI-compatible API 连接本地 vLLM 或云端模型。
+`auto` 在模型不可用时安全降级；`on` 要求模型配置完整。项目不绑定 Qwen API，部署时可连接服务器本地 vLLM，也可连接任何兼容 OpenAI API 的模型服务。
 
-## 公开信息检索与成本
-
-推荐把稳定性与成本分开配置：
+## 搜索配置
 
 ```env
-# auto: 有 Tavily Key 时使用 Tavily；否则不联网
-# ddgs: 无 API Key 的 best-effort 回退；off: 禁用联网
-IPO_SEARCH_PROVIDER=auto
+IPO_SEARCH_PROVIDER=auto       # auto / tavily / ddgs / off
 IPO_SEARCH_MAX_QUERIES=8
 IPO_LEGAL_SEARCH_MAX_QUERIES=8
 TAVILY_API_KEY=
 ```
 
-- Tavily：有免费额度，结果结构稳定，适合演示和可复现回归；
-- DDGS：无需 Key，但云服务器出口可能被搜索引擎限流。系统将它限制为最多三个主题并设置短超时；
-- 无可用搜索源：报告明确显示外部核验缺口，不创建假 URL。
-- 行业/竞争与法务/负面检索使用独立查询预算，避免高优先级监管查询挤掉行业、竞品、上下游和政策查询。
-- 搜索摘要只作为待核实线索；报告保留 URL、来源层级和查询主题，不能将摘要直接升级为已确认负面事实。
-
-可单独检查搜索连通性：
-
-```bash
-IPO_SEARCH_PROVIDER=ddgs IPO_SEARCH_MAX_QUERIES=1 \
-python scripts/smoke_search.py "示例股份有限公司"
-```
+搜索摘要仅用于发现候选来源。系统会尝试抓取原始网页、进行来源和主体匹配，再登记为正式 Evidence；没有可用来源时明确报告外部核验缺口。
 
 ## 输出
 
-```text
-data/extracted/<document_id>/
-├── document.json
-├── pages.json
-├── raw_statements.json
-├── financial_kb.json
-├── metrics.json
-├── forensic_findings.json
-├── research_plan.json
-├── research_ledger.json
-├── agent_messages.json
-├── report_review.json
-└── run_summary.json
+每次运行按 `job_id` 隔离：
 
-data/output/
-├── <document_id>/
-│   ├── IPO_Due_Diligence_Report.md
-│   ├── IPO_Due_Diligence_Report.xlsx
-│   ├── evidence.json
-│   ├── agent_trace.json
-│   └── delivery_manifest.json
-├── <document_id>_due_diligence_report.md
-├── <document_id>_financial_report.md
-└── <document_id>_financial_workbook.xlsx
+```text
+data/output/<job_id>/
+├── stage_manager/
+├── stage_financial/
+├── stage_company/
+├── stage_industry/
+├── stage_legal/
+├── stage_report_materials/
+├── stage_final_reviewer/
+├── stage_report/
+│   ├── section_materials.json
+│   ├── generated_sections.json
+│   ├── section_validations.json
+│   ├── evidence_appendix.json
+│   ├── final_report.json
+│   └── final_report.md
+└── full_research_run_result.json
 ```
 
-`data/output/<document_id>/` 是稳定的用户交付包。Excel 除完整财务底稿外，还包含尽调结论、Research Evidence、Research Findings、补充尽调清单和 Agent Trace；`evidence.json` 在导出前执行 Evidence → Finding 引用完整性校验。`raw_statements.json` 与 Excel 保留原始科目；Markdown 中的三表由文档层还原，不让 LLM 重新生成数字。
+中间 JSON 是可审计交付物，可用于复核 Agent 状态、问题覆盖、Evidence 链和降级原因。真实招股书、数据库、`.env` 和生成报告属于本地运行数据，默认由 `.gitignore` 排除。
 
 ## 验证
 
 ```bash
+python -m compileall -q src main.py app.py
 python -m pytest -q
 ```
 
-当前回归覆盖 PDF 页选择、三表、财务事实、指标、法证规则、异常解释、Research Ledger、搜索完整性、四专业 Agent、Skeptic 路由、报告渲染与终审。在一份 504 页申请版本上，离线回归抽取 13 张原表、468 条财务事实与 29 个指标；这些是可复现实例，不代表对所有 PDF 的通用准确率。
+测试覆盖文档定位、三表与指标、财务规则、Research Ledger、Manager 验收与降级、Company/Industry/Legal 阶段、Evidence 引用、Topic Review、Final Synthesis、章节路由、Validator 和报告组装。
 
-## 设计边界
+## 已知边界
 
-- 扫描版 PDF 仍需 OCR；无框表、跨页合并单元格可能需要人工复核；
-- 搜索摘要是发现线索，不是已证实事实；官方来源同样需要核对主体、日期和文件版本；
-- 财务规则是“侦探问题生成器”，不是审计结论；
-- 正式使用前应由投资、财务和法律人员复核关键数字、口径、期间与引用；
-- 当前主线只做上市前公司尽调；上市后股价风险预警保留为 Mainline B 接口，尚未实现。
+- 扫描型 PDF、复杂跨页表格和 OCR 仍可能需要人工复核。
+- 外部网站可能有反爬、登录、地区限制或内容变更。
+- Legal Agent 是研究辅助工具，不能替代正式法律尽调。
+- 当前主线面向上市前公司尽调，不包含上市后行情预警和自动交易。
+- 运行结果不构成投资建议、估值结论、审计意见或法律意见。
 
-## 设计参考
+## Roadmap
 
-本项目复用的是公开项目的架构思想与接口模式，没有复制特定公司的研究结论或样本页码：
+- 多公司、多行业回归和更完善的质量指标
+- 断点恢复、缓存、失败重试和任务队列
+- Evidence 点击定位、人工 Review 工作台
+- 第二轮补证和 DOCX/PDF 报告导出
+- 并发运行、成本/耗时统计和生产权限控制
+- 上市后公告监控与持续风险更新
 
-- [TradingAgents](https://github.com/tauricresearch/tradingagents)：专业角色、正反方研究与风险管理；
-- [multi-agent-financial-report](https://github.com/bcefghj/multi-agent-financial-report)：并行研究、报告写作与合规审阅；
-- [ValueCell](https://github.com/ValueCell-ai/valuecell)：可插拔 Agent、模型和数据提供商；
-- [Azure Trust Agents](https://github.com/microsoft/azure-trust-agents)：金融场景中的可信、合规与审计思路；
-- [FinnewsHunter](https://github.com/DemonDamon/FinnewsHunter)：新闻检索与金融情报信号；
-- [CryptoTradingAgents](https://github.com/Tomortec/CryptoTradingAgents)：结构化多角色消息和协作轨迹。
+## License
 
-更多实现细节见 `docs/architecture.md`；产品边界、阶段对比和路线图见 `docs/PRD.md`。
+建议使用 MIT License。使用招股书、网页和行业资料时，请遵守原始来源的版权、访问和使用条款。
