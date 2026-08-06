@@ -1,0 +1,33 @@
+from ipo_financial_agent.schemas import ResearchQuestion, ResearchTask
+
+
+def build_fixed_financial_task() -> ResearchTask:
+    """Return the deterministic Financial-only task used before Manager integration."""
+    return ResearchTask(
+        task_id="TASK_FA_001",
+        target_agent="financial",
+        objective="验证公司的盈利质量、资产质量和现金流质量",
+        questions=[
+            ResearchQuestion(
+                question_id="FA_Q001",
+                question="利润增长是否能够转化为经营现金流？",
+                reason="净利润增长不一定代表实际现金创造能力。",
+                priority="P0",
+                expected_evidence=["净利润", "经营活动现金流", "经营现金流与净利润比率"],
+            ),
+            ResearchQuestion(
+                question_id="FA_Q002",
+                question="应收账款和存货增长是否与收入增长匹配？",
+                reason="识别收入质量和资产积压风险。",
+                priority="P0",
+                expected_evidence=["营业收入", "应收账款", "存货", "应收周转率", "存货周转率"],
+            ),
+        ],
+        pdf_topics=["财务资料", "贸易应收款项", "存货", "现金流量表"],
+        web_topics=[],
+        completion_criteria=[
+            "生成核心财务指标",
+            "每条异常都引用Evidence",
+            "中高风险异常包含可能解释和补证要求",
+        ],
+    )
