@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import shutil
 import socket
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,10 @@ from ipo_financial_agent.models import (
 )
 from ipo_financial_agent.models_agent import AgentMessage, Evidence
 from ipo_financial_agent.output.excel_writer import export_financial_workbook
+from ipo_financial_agent.output.delivery_writer import (
+    enrich_due_diligence_workbook,
+    ledger_integrity,
+)
 from ipo_financial_agent.output.report_writer import write_markdown_report
 from ipo_financial_agent.rendering import render_investment_markdown
 from ipo_financial_agent.research import (
@@ -868,6 +873,19 @@ class IPOFinancialPipeline:
 
         # Original JSON outputs
         pages_json = write_json(artifact_dir / "pages.json", pages)
+        document_json = write_json(
+            artifact_dir / "document.json",
+            {
+                "schema_version": "2.0",
+                "document_id": document_id,
+                "company": company,
+                "source_pdf": state.get("pdf_path", ""),
+                "page_count": len(pages),
+                "pages": pages,
+                "sections": state.get("section_hits", []),
+                "topic_page_groups": state.get("topic_page_groups", {}),
+            },
+        )
         raw_statements_json = write_json(
             artifact_dir / "raw_statements.json", raw_statements
         )
@@ -956,6 +974,88 @@ class IPOFinancialPipeline:
             )
             write_markdown_report(final_report_path, final_report)
 
+        # Stable product delivery bundle. Each run gets an isolated directory,
+        # while filenames remain exactly those promised by the PRD.
+        delivery_dir = self.settings.output_dir / document_id
+        delivery_dir.mkdir(parents=True, exist_ok=True)
+        delivery_report_path = delivery_dir / "IPO_Due_Diligence_Report.md"
+        write_markdown_report(
+            delivery_report_path,
+            final_report or "(due diligence report not generated)",
+        )
+        delivery_workbook_path = delivery_dir / "IPO_Due_Diligence_Report.xlsx"
+        shutil.copy2(excel_path, delivery_workbook_path)
+        enrich_due_diligence_workbook(
+            workbook_path=delivery_workbook_path,
+            evidence=state.get("research_evidence", []),
+            findings=state.get("research_findings", []),
+            diligence_questions=state.get("diligence_questions", []),
+            agent_messages=state.get("agent_messages", []),
+            conclusion=state.get("due_diligence_conclusion"),
+            report_review=state.get("report_review"),
+        )
+        integrity = ledger_integrity(
+            state.get("research_evidence", []),
+            state.get("research_findings", []),
+        )
+        if not integrity["passed"]:
+            raise RuntimeError(
+                "Evidence -> Finding integrity validation failed: "
+                f"{integrity}"
+            )
+        evidence_json = write_json(
+            delivery_dir / "evidence.json",
+            {
+                "schema_version": "2.0",
+                "document_id": document_id,
+                "company": company,
+                "integrity": integrity,
+                "evidence": state.get("research_evidence", []),
+                "findings": state.get("research_findings", []),
+                "open_questions": state.get("open_questions", []),
+                "challenges": state.get("challenges", []),
+            },
+        )
+        agent_trace_json = write_json(
+            delivery_dir / "agent_trace.json",
+            {
+                "schema_version": "2.0",
+                "document_id": document_id,
+                "company": company,
+                "research_plan": state.get("research_plan"),
+                "messages": state.get("agent_messages", []),
+            },
+        )
+        delivery_manifest_json = write_json(
+            delivery_dir / "delivery_manifest.json",
+            {
+                "schema_version": "2.0",
+                "document_id": document_id,
+                "company": company,
+                "inputs": {
+                    "company": company,
+                    "prospectus_pdf": state.get("pdf_path", ""),
+                },
+                "deliverables": {
+                    "report_markdown": str(delivery_report_path),
+                    "report_workbook": str(delivery_workbook_path),
+                    "evidence": str(evidence_json),
+                    "agent_trace": str(agent_trace_json),
+                },
+                "supporting_artifacts": {
+                    "document": str(document_json),
+                    "research_plan": str(research_plan_json),
+                    "company_business": str(prospectus_json),
+                    "financial": str(financial_kb_json),
+                    "industry": str(industry_json),
+                    "legal_governance": str(legal_governance_json),
+                    "risk_review": str(risk_review_json),
+                    "report_review": str(report_review_json),
+                },
+                "integrity": integrity,
+            },
+        )
+
         # Database storage
         repository = FinancialRepository(self.settings.db_path)
         try:
@@ -997,6 +1097,12 @@ class IPOFinancialPipeline:
             risk_findings_json=str(risk_json),
             excel_path=str(excel_path),
             report_path=str(report_path),
+            document_json=str(document_json),
+            final_report_path=str(delivery_report_path),
+            due_diligence_workbook_path=str(delivery_workbook_path),
+            evidence_json=str(evidence_json),
+            agent_trace_json=str(agent_trace_json),
+            delivery_manifest_json=str(delivery_manifest_json),
             metadata={
                 "page_count": len(pages),
                 "candidate_page_count": len(state.get("candidate_pages", [])),
@@ -1021,9 +1127,15 @@ class IPOFinancialPipeline:
                 "report_revision_performed": state.get(
                     "report_revision_performed", False
                 ),
-                "final_report_path": str(final_report_path)
+                "legacy_final_report_path": str(final_report_path)
                 if final_report_path
                 else None,
+                "final_report_path": str(delivery_report_path),
+                "due_diligence_workbook_path": str(delivery_workbook_path),
+                "evidence_json": str(evidence_json),
+                "agent_trace_json": str(agent_trace_json),
+                "delivery_manifest_json": str(delivery_manifest_json),
+                "ledger_integrity_passed": integrity["passed"],
                 "risk_level": getattr(state.get("risk_review"), "risk_level", None),
                 "research_plan_json": str(research_plan_json),
                 "agent_messages_json": str(agent_messages_json),

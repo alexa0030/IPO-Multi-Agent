@@ -211,4 +211,10 @@ class PipelineArtifacts(BaseModel):
     risk_findings_json: str
     excel_path: str
     report_path: str | None = None
+    document_json: str | None = None
+    final_report_path: str | None = None
+    due_diligence_workbook_path: str | None = None
+    evidence_json: str | None = None
+    agent_trace_json: str | None = None
+    delivery_manifest_json: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
