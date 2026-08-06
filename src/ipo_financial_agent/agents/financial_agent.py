@@ -44,6 +44,7 @@ from ipo_financial_agent.models import (
     StatementFact,
 )
 from ipo_financial_agent.models_agent import FinancialFinding
+from ipo_financial_agent.schemas import ResearchTask
 
 T = TypeVar("T")
 
@@ -97,6 +98,7 @@ class FinancialAnalysisAgent:
         section_hits: list[Any],
         topic_page_groups: dict[str, list[Any]] | None = None,
         llm_mode: str = "auto",
+        task: ResearchTask | None = None,
     ) -> dict[str, Any]:
         """
         Run the full financial analysis as a Tool-Augmented Agent.
@@ -109,6 +111,11 @@ class FinancialAnalysisAgent:
           - risks: list[RiskFinding]      (6-rule engine)
           - findings: list[FinancialFinding]  (20-rule forensic engine)
         """
+        if task is not None and task.target_agent != "financial":
+            raise ValueError(
+                f"FinancialAnalysisAgent cannot execute task for {task.target_agent}"
+            )
+
         # ---- Tool 1: Extract raw statements from PDF tables ----
         print("[financial-agent] Tool 1: Raw Statement Extraction", flush=True)
         raw_statements = self._tool_extract_raw_statements(
@@ -188,6 +195,7 @@ class FinancialAnalysisAgent:
         )
 
         return {
+            "task": task,
             "analysis": analysis,
             "raw_statements": raw_statements,
             "extraction_result": extraction_result,

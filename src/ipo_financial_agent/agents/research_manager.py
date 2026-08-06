@@ -9,6 +9,10 @@ from typing import Any, ClassVar
 from ipo_financial_agent.llm.client import OpenAICompatibleClient
 from ipo_financial_agent.llm.prompts_agents import RESEARCH_MANAGER_SYSTEM_PROMPT
 from ipo_financial_agent.models_agent import ResearchPlan, ResearchTask
+from ipo_financial_agent.schemas import (
+    ResearchQuestion as ContractResearchQuestion,
+    ResearchTask as ContractResearchTask,
+)
 
 
 class ResearchManagerAgent:
@@ -33,6 +37,49 @@ class ResearchManagerAgent:
         if self.client is None:
             return self._default_plan(company, document_summary)
         return self._plan_with_llm(company, document_summary)
+
+    @staticmethod
+    def plan_financial_task(company: str) -> ContractResearchTask:
+        """Phase-one task contract: one bounded Financial Agent assignment."""
+        return ContractResearchTask(
+            task_id="TASK_FA_01",
+            target_agent="financial",
+            objective=f"验证{company}的盈利质量、资产质量和现金流质量",
+            questions=[
+                ContractResearchQuestion(
+                    question_id="Q_FA_01",
+                    question="营业收入和净利润增长是否能够转化为经营现金流？",
+                    reason="利润增长不一定代表实际现金创造能力。",
+                    priority="P0",
+                    expected_evidence=[
+                        "利润表",
+                        "现金流量表",
+                        "经营现金流与净利润比率",
+                    ],
+                ),
+                ContractResearchQuestion(
+                    question_id="Q_FA_02",
+                    question="应收账款、存货增长是否与收入增长匹配？",
+                    reason="识别收入质量和资产积压风险。",
+                    priority="P0",
+                    expected_evidence=["应收账款", "存货", "营业收入", "周转率"],
+                ),
+                ContractResearchQuestion(
+                    question_id="Q_FA_03",
+                    question="销售费用率变化是否由可验证的市场拓展活动支持？",
+                    reason="区分增长投入与获客效率恶化。",
+                    priority="P1",
+                    expected_evidence=["销售费用", "营业收入", "销售费用率"],
+                ),
+            ],
+            pdf_topics=["财务资料", "贸易应收款项", "存货", "现金流量表"],
+            web_topics=[],
+            completion_criteria=[
+                "生成核心财务指标",
+                "所有异常具有 Evidence",
+                "每项异常包含可能解释和补证要求",
+            ],
+        )
 
     @staticmethod
     def _default_plan(
