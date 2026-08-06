@@ -4,6 +4,27 @@ from ipo_financial_agent.agents.industry_agent import IndustryAgent
 from ipo_financial_agent.models import PageData
 
 
+class JsonIndustryClient:
+    def complete_text(self, **_: object) -> str:
+        return """{
+          "industry_overview": "发行人披露其服务于工业数字打印市场。",
+          "market_growth": "市场增速仍需外部原文复核。",
+          "competitors": ["竞争者A"],
+          "industry_trends": ["下游数字化"],
+          "industry_risks": ["价格竞争"],
+          "value_chain": ["上游核心部件—公司控制系统—下游设备商"],
+          "customer_industries": ["纺织印花"],
+          "competitive_dimensions": ["稳定性、交付和服务"],
+          "barriers_to_entry": ["客户验证和切换成本"],
+          "growth_drivers": ["海外客户拓展"],
+          "expansion_paths": ["工业喷墨新场景"],
+          "findings": [
+            {"question":"公司的竞争壁垒是什么？","conclusion":"发行人披露客户验证形成切换成本。","evidence_refs":[1],"risks":[],"open_questions":["访谈客户核实切换周期。"]},
+            {"question":"无证据判断","conclusion":"模型猜测内容","evidence_refs":[99],"risks":[],"open_questions":[]}
+          ]
+        }"""
+
+
 @patch(
     "ipo_financial_agent.agents.industry_agent.search_industry_info",
     return_value=[],
@@ -70,3 +91,28 @@ def test_external_evidence_is_labelled_separately(_search: object) -> None:
         result.evidence[0].metadata["verification_status"]
         == "search_lead_requires_source_review"
     )
+
+
+@patch(
+    "ipo_financial_agent.agents.industry_agent.search_industry_info",
+    return_value=[],
+)
+def test_llm_industry_findings_must_reference_real_evidence(_search: object) -> None:
+    pages = [
+        PageData(
+            source_file="prospectus.pdf",
+            page=88,
+            text="行业概览。公司在工业数字打印市场依靠客户验证和服务形成切换成本，市场份额为5.9%。",
+            tables=[],
+        )
+    ]
+
+    result = IndustryAgent(JsonIndustryClient()).analyze(
+        company="测试公司", pages=pages
+    )
+
+    assert result.value_chain
+    assert result.customer_industries == ["纺织印花"]
+    assert len(result.structured_findings) == 1
+    assert result.structured_findings[0].evidence_ids == [result.evidence[0].evidence_id]
+    assert "模型猜测内容" not in result.structured_findings[0].conclusion

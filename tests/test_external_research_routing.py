@@ -1,4 +1,4 @@
-from ipo_financial_agent.models_agent import Evidence, IndustryAnalysis
+from ipo_financial_agent.models_agent import Evidence, Finding, IndustryAnalysis
 from ipo_financial_agent.research.ledger_builders import industry_research_patch
 
 
@@ -37,3 +37,23 @@ def test_industry_search_lead_stays_in_industry_section() -> None:
     finding = next(item for item in patch.findings if item.agent_name == "industry_competition")
     assert finding.evidence_strength == "medium"
     assert finding.evidence_ids == [evidence.evidence_id]
+
+
+def test_grounded_industry_finding_replaces_duplicate_search_lead() -> None:
+    evidence = _web_evidence("competitors", tier="official")
+    grounded = Finding(
+        agent_name="industry_competition",
+        question="竞争壁垒是什么？",
+        conclusion="公开来源显示认证周期较长，但仍需阅读全文。",
+        evidence_ids=[evidence.evidence_id],
+        evidence_strength="medium",
+    )
+    patch = industry_research_patch(
+        IndustryAnalysis(
+            company="示例公司",
+            structured_findings=[grounded],
+            evidence=[evidence],
+        )
+    )
+
+    assert patch.findings == [grounded]

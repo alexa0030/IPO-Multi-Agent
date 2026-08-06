@@ -403,6 +403,13 @@ class IndustryAnalysis(BaseModel):
     competitors: list[str] = Field(default_factory=list)
     industry_trends: list[str] = Field(default_factory=list)
     industry_risks: list[str] = Field(default_factory=list)
+    value_chain: list[str] = Field(default_factory=list)
+    customer_industries: list[str] = Field(default_factory=list)
+    competitive_dimensions: list[str] = Field(default_factory=list)
+    barriers_to_entry: list[str] = Field(default_factory=list)
+    growth_drivers: list[str] = Field(default_factory=list)
+    expansion_paths: list[str] = Field(default_factory=list)
+    structured_findings: list[Finding] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     raw_markdown: str = ""
 
@@ -416,6 +423,9 @@ class LegalGovernanceAnalysis(BaseModel):
     controller_and_ownership_risks: list[str] = Field(default_factory=list)
     litigation_and_penalties: list[str] = Field(default_factory=list)
     licensing_ip_data_risks: list[str] = Field(default_factory=list)
+    financial_reporting_integrity: list[str] = Field(default_factory=list)
+    financing_debt_guarantees: list[str] = Field(default_factory=list)
+    listing_filings: list[str] = Field(default_factory=list)
     adverse_information: list[str] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)

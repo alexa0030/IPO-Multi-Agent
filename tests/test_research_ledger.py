@@ -3,14 +3,18 @@ from pydantic import ValidationError
 
 from ipo_financial_agent.models_agent import (
     Evidence,
+    CompanyBusinessDossier,
+    CompanyDossierFinding,
     FinancialFinding,
     Finding,
     IndustryAnalysis,
+    ProspectusAnalysis,
     ResearchTask,
 )
 from ipo_financial_agent.research import (
     financial_research_patch,
     industry_research_patch,
+    prospectus_research_patch,
 )
 from ipo_financial_agent.storage.evidence_store import (
     EvidenceIntegrityError,
@@ -109,3 +113,31 @@ def test_industry_adapter_does_not_publish_unverified_conclusion() -> None:
 
     assert patch.findings == []
     assert patch.open_questions
+
+
+def test_company_dossier_topics_are_published_to_shared_ledger() -> None:
+    evidence = Evidence(
+        source_type="prospectus",
+        page_number=66,
+        content="前五大客户合计占收入百分之六十。",
+    )
+    analysis = ProspectusAnalysis(
+        company="示例公司",
+        dossier=CompanyBusinessDossier(
+            company="示例公司",
+            topic_findings={
+                "customers_suppliers": [
+                    CompanyDossierFinding(
+                        topic="customers_suppliers",
+                        statement="前五大客户合计占收入百分之六十。",
+                        evidence=[evidence],
+                    )
+                ]
+            },
+        ),
+    )
+    patch = prospectus_research_patch(analysis)
+    assert len(patch.findings) == 1
+    assert patch.findings[0].agent_name == "company_business"
+    assert "客户供应商结构" in patch.findings[0].question
+    assert patch.findings[0].evidence_ids == [evidence.evidence_id]
