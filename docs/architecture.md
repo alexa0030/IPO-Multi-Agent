@@ -58,7 +58,7 @@ The writer is hybrid: deterministic rendering is authoritative; short narrative 
 The final reviewer checks:
 
 1. mandatory company, industry, financial, future-earning, legal, conflict, and conclusion sections;
-2. balance sheet, income statement, and cash-flow statement presence;
+2. six company/business subsections plus balance sheet, income statement, and cash-flow statement presence;
 3. Evidence IDs, prospectus pages, or URLs;
 4. unsupported claims and investment-scope violations;
 5. one bounded revision without adding new facts.
@@ -67,7 +67,7 @@ Deterministic issues are authoritative. LLM scores are recalculated from the str
 
 ## External research
 
-`SearchService` is provider-based and budgeted. The query planner covers twelve themes, prioritizing regulatory and adverse checks before general market research. URLs are deduplicated and graded as official, primary, or secondary.
+`SearchService` is provider-based and budgeted. The query planner covers twelve themes. Industry/competition and legal/governance use independent query budgets, so P0 regulatory checks cannot consume the cap before industry, competitor, customer/supplier, and policy research runs. URLs are deduplicated and graded as official, primary, or secondary.
 
 - Tavily is selected when a key is configured.
 - DDGS is an opt-in, no-key fallback capped at three themes because cloud IPs are frequently throttled.

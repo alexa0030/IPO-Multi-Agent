@@ -104,12 +104,15 @@ streamlit run app.py --server.address 0.0.0.0 --server.port 8501
 # ddgs: 无 API Key 的 best-effort 回退；off: 禁用联网
 IPO_SEARCH_PROVIDER=auto
 IPO_SEARCH_MAX_QUERIES=8
+IPO_LEGAL_SEARCH_MAX_QUERIES=8
 TAVILY_API_KEY=
 ```
 
 - Tavily：有免费额度，结果结构稳定，适合演示和可复现回归；
 - DDGS：无需 Key，但云服务器出口可能被搜索引擎限流。系统将它限制为最多三个主题并设置短超时；
 - 无可用搜索源：报告明确显示外部核验缺口，不创建假 URL。
+- 行业/竞争与法务/负面检索使用独立查询预算，避免高优先级监管查询挤掉行业、竞品、上下游和政策查询。
+- 搜索摘要只作为待核实线索；报告保留 URL、来源层级和查询主题，不能将摘要直接升级为已确认负面事实。
 
 可单独检查搜索连通性：
 
