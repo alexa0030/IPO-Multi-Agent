@@ -20,6 +20,7 @@ class Finding(BaseModel):
     alternative_explanations: list[str] = Field(default_factory=list)
     required_checks: list[str] = Field(default_factory=list)
     upgrade_condition: str | None = None
+    upgrade_condition_met: bool = False
     cross_check_topics: list[str] = Field(default_factory=list)
     risk_level: Literal["positive", "low", "medium", "high"]
     confidence: Literal["low", "medium", "high"]
