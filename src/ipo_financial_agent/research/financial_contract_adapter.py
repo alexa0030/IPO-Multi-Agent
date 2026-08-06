@@ -7,7 +7,14 @@ from typing import Any
 
 from ipo_financial_agent.models import MetricResult, StatementFact
 from ipo_financial_agent.models_agent import FinancialFinding as LegacyFinancialFinding
-from ipo_financial_agent.schemas import Evidence, FinancialAgentResult, Finding, ResearchTask
+from ipo_financial_agent.schemas import (
+    CompletionCheck,
+    Evidence,
+    FinancialAgentResult,
+    Finding,
+    QuestionAnswerMapping,
+    ResearchTask,
+)
 
 
 def fact_evidence_id(fact_id: str) -> str:
@@ -261,41 +268,103 @@ def build_financial_agent_result(
     revenue = metric_map.get("revenue_growth")
     receivable = metric_map.get("receivable_growth")
     inventory = metric_map.get("inventory_growth")
-    if revenue and receivable and inventory:
+    if revenue and receivable:
         gap = receivable.value - revenue.value
         findings.append(Finding(
             finding_id="FIN_FA_Q002",
             task_id=task.task_id,
             agent="financial",
-            topic="working_capital_growth_match",
-            title="应收账款和存货增长与收入增长的匹配情况",
-            statement=(f"{revenue.period}年收入增长{revenue.display_value}，应收账款增长"
-                f"{receivable.display_value}，存货增长{inventory.display_value}。"),
-            evidence_ids=[metric_evidence_id(item.metric_id) for item in (revenue, receivable, inventory)],
-            interpretation=("应收账款增速高于收入增速，需核验销售回款质量；"
-                "存货增速低于收入增速，本指标本身未显示同步积压。"),
+            topic="receivable_revenue_match",
+            title="应收账款增长与收入增长的匹配情况",
+            statement=(f"{revenue.period}年收入增长{revenue.display_value}，"
+                f"应收账款增长{receivable.display_value}。"),
+            evidence_ids=[metric_evidence_id(item.metric_id) for item in (revenue, receivable)],
+            interpretation="应收账款增速高于收入增速，需进一步核验销售回款质量。",
             alternative_explanations=["期末销售集中", "客户结构或信用期变化", "并购并表口径变化"],
-            required_checks=["应收账款账龄", "主要客户期后回款", "存货库龄及跌价准备"],
+            required_checks=["应收账款账龄", "主要客户期后回款"],
             cross_check_topics=["customer_concentration", "cash_flow_quality"],
             risk_level="medium" if gap > .15 else "low",
             confidence="high",
         ))
-    finding_ids = {item.finding_id for item in findings}
-    answered = []
-    if "FIN_FA_Q001" in finding_ids:
-        answered.append("FA_Q001")
-    if "FIN_FA_Q002" in finding_ids:
-        answered.append("FA_Q002")
-    unanswered = [
-        item.question for item in task.questions if item.question_id not in answered
-    ]
+    if revenue and inventory:
+        gap = inventory.value - revenue.value
+        findings.append(Finding(
+            finding_id="FIN_FA_Q003",
+            task_id=task.task_id,
+            agent="financial",
+            topic="inventory_revenue_match",
+            title="存货增长与收入增长的匹配情况",
+            statement=(f"{revenue.period}年收入增长{revenue.display_value}，"
+                f"存货增长{inventory.display_value}。"),
+            evidence_ids=[metric_evidence_id(item.metric_id) for item in (revenue, inventory)],
+            interpretation=("存货增速低于收入增速，本指标本身未显示同步积压；"
+                "仍需结合库龄和跌价准备核验资产质量。"),
+            alternative_explanations=["备货策略变化", "供应链效率变化", "并购并表口径变化"],
+            required_checks=["存货库龄", "存货跌价准备", "期后销售情况"],
+            cross_check_topics=["capacity_utilization", "asset_quality"],
+            risk_level="medium" if gap > .15 else "low",
+            confidence="high",
+        ))
+    findings_by_topic: dict[str, list[Finding]] = {}
+    for item in findings:
+        findings_by_topic.setdefault(item.topic.value, []).append(item)
+    mappings: list[QuestionAnswerMapping] = []
+    evidence_by_id = {item.evidence_id: item for item in all_evidence}
+    question_ids_by_finding: dict[str, list[str]] = {}
+    for question in task.questions:
+        matched = findings_by_topic.get(question.research_topic.value, [])
+        mapped_evidence = list(dict.fromkeys(
+            evidence_id for finding in matched for evidence_id in finding.evidence_ids
+        ))
+        checks: list[CompletionCheck] = []
+        for criterion in question.completion_criteria:
+            if "计算证据" in criterion or "增长率" in criterion:
+                passed = any(
+                    evidence_by_id[item].source_type == "calculation"
+                    for item in mapped_evidence if item in evidence_by_id
+                )
+            else:
+                passed = bool(matched and mapped_evidence)
+            checks.append(CompletionCheck(
+                criterion=criterion,
+                passed=passed,
+                evidence_ids=mapped_evidence if passed else [],
+                note=None if passed else "现有Finding或Evidence不足以满足该完成标准",
+            ))
+        all_checks_pass = bool(checks) and all(item.passed for item in checks)
+        if matched and mapped_evidence and all_checks_pass:
+            status = "answered"
+            gap_reason = None
+        elif matched:
+            status = "partially_answered"
+            gap_reason = "存在Finding，但完成标准或证据要求尚未全部满足"
+        else:
+            status = "unanswered"
+            gap_reason = "没有与该研究主题匹配的Finding"
+        mappings.append(QuestionAnswerMapping(
+            question_id=question.question_id,
+            research_topic=question.research_topic,
+            finding_ids=[item.finding_id for item in matched],
+            evidence_ids=mapped_evidence,
+            completion_checks=checks,
+            status=status,
+            gap_reason=gap_reason,
+        ))
+        for finding in matched:
+            question_ids_by_finding.setdefault(finding.finding_id, []).append(question.question_id)
+    findings = [item.model_copy(update={
+        "answered_question_ids": question_ids_by_finding.get(item.finding_id, [])
+    }) for item in findings]
+    all_answered = bool(mappings) and all(item.status == "answered" for item in mappings)
+    missing_p0 = {
+        question.question_id for question in task.questions if question.priority == "P0"
+    } - {item.question_id for item in mappings if item.status == "answered"}
+    errors = [] if findings else ["No supported, traceable financial findings were produced."]
     return FinancialAgentResult(
         task_id=task.task_id,
-        answered_question_ids=answered,
-        unanswered_questions=unanswered,
         evidences=all_evidence,
         findings=findings,
-        completion_status=("completed" if len(answered) == len(task.questions)
-            else ("partial" if findings else "failed")),
-        errors=[] if findings else ["No supported, traceable financial rules were triggered."],
+        question_answer_map=mappings,
+        completion_status=("completed" if all_answered else ("failed" if not findings else "partial")),
+        errors=errors + ([f"Unanswered P0 questions: {sorted(missing_p0)}"] if missing_p0 else []),
     )

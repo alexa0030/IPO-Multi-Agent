@@ -43,7 +43,11 @@ def test_financial_stage_contract_meets_acceptance_and_is_deterministic():
     first = build_financial_agent_result(task=task, rules=rules, evidence=evidence, metrics=metrics)
     second = build_financial_agent_result(task=task, rules=rules, evidence=evidence, metrics=metrics)
     assert first.completion_status == "completed"
-    assert first.answered_question_ids == ["FA_Q001", "FA_Q002"]
+    assert [item.question_id for item in first.question_answer_map] == [
+        "FA_Q001", "FA_Q002", "FA_Q003"
+    ]
+    assert all(item.status == "answered" for item in first.question_answer_map)
+    assert all(item.completion_checks for item in first.question_answer_map)
     assert len(first.findings) >= 3
     assert {item.source_type for item in first.evidences}.issuperset({"prospectus", "calculation"})
     assert all(item.alternative_explanations and item.required_checks for item in first.findings if item.risk_level in {"medium", "high"})
@@ -52,3 +56,20 @@ def test_financial_stage_contract_meets_acceptance_and_is_deterministic():
     payload = first.model_dump(mode="json")
     assert FinancialAgentResult.model_validate_json(json.dumps(payload, ensure_ascii=False)) == first
     assert first.model_dump(mode="json") == second.model_dump(mode="json")
+
+
+def test_question_finding_evidence_links_are_bidirectionally_consistent():
+    task = build_fixed_financial_task()
+    facts, metrics, rules = _inputs()
+    result = build_financial_agent_result(
+        task=task,
+        rules=rules,
+        evidence=register_financial_evidence(facts=facts, metrics=metrics),
+        metrics=metrics,
+    )
+    finding_by_id = {item.finding_id: item for item in result.findings}
+    evidence_ids = {item.evidence_id for item in result.evidences}
+    for mapping in result.question_answer_map:
+        for finding_id in mapping.finding_ids:
+            assert mapping.question_id in finding_by_id[finding_id].answered_question_ids
+        assert set(mapping.evidence_ids) <= evidence_ids

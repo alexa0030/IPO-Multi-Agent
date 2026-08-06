@@ -73,7 +73,9 @@ class FinancialStage:
         return {
             "job_id": job_id,
             "completion_status": result.completion_status,
-            "answered_question_ids": result.answered_question_ids,
+            "question_statuses": {
+                item.question_id: item.status for item in result.question_answer_map
+            },
             "evidence_count": len(result.evidences),
             "finding_count": len(result.findings),
             "paths": {key: str(value) for key, value in paths.items()},
