@@ -2,7 +2,7 @@
 
 面向港股 IPO 招股书的 Evidence-grounded Multi-Agent 尽职调查系统。输入公司名称和招股书 PDF，系统完成文档解析、确定性财务分析、公司与业务研究、行业与竞争验证、法律治理审阅、跨 Agent 复核，并输出可追溯的 Markdown/JSON/Excel 研究材料。
 
-> 当前定位：v0.8 Engineering MVP。项目用于研究辅助、工程演示和多 Agent 金融文档分析实验，不构成投资、法律或审计意见。
+> 当前定位：v0.9 Engineering MVP。项目用于研究辅助、工程演示和多 Agent 金融文档分析实验，不构成投资、法律或审计意见。
 
 ## 核心原则
 
@@ -23,24 +23,20 @@ flowchart TD
     C --> E[Company & Business Agent]
     C --> F[Industry & Competition Agent]
     C --> G[Legal & Governance Agent]
-    D --> H[Report Material Pack V0]
+    D --> H[Evidence / Finding Ledger]
     E --> H
     F --> H
     G --> H
-    H --> I[Coverage Gate]
-    I --> J[Topic Review Packets]
-    J --> K[Qwen Topic Reviewer]
-    K --> L[Deterministic Topic Validator]
-    L --> M[Final Synthesis]
-    M --> N[Final Review Validator]
-    N --> O[Report Material Pack V1]
-    O --> P[Section Material Router]
-    P --> Q[Deterministic Renderer]
-    P --> R[Qwen Section Writer]
-    Q --> S[Section Validator]
-    R --> S
-    S --> T[Final Report Assembler]
-    T --> U[Markdown + JSON + Excel]
+    H --> I[Risk Reviewer]
+    I --> J[Skeptic Challenge]
+    J --> K{证据缺口是否可补证}
+    K -->|是，最多一轮| L[Targeted Follow-up Search]
+    L --> M[Reviewer Re-check]
+    K -->|否| N[Due-diligence Lead]
+    M --> N
+    N --> O[Deterministic Report Renderer]
+    O --> P[Report Reviewer]
+    P --> Q[Markdown + JSON + Excel]
 ```
 
 ## Agent 职责
@@ -52,9 +48,10 @@ flowchart TD
 | Company & Business Agent | 公司历史、产品、商业模式、客户、供应商、技术和增长计划 |
 | Industry & Competition Agent | Web-first 行业规模、产业链、竞争格局、壁垒、政策和周期验证 |
 | Legal & Governance Agent | 实控人、股权、子公司、关联方、诉讼、处罚、执行和治理事项 |
-| Topic Reviewer | 按投资主题对多个 Agent 的 Finding 做正面/负面/缺口复核 |
-| Final Synthesis | 综合历史财务质量、未来盈利能力和重大负面事项 |
-| Report Pipeline | 生成章节材料、逐章写作、验证、组装最终报告 |
+| Risk Reviewer | 跨 Agent 汇总风险、矛盾和投资核查问题，并构建风险矩阵 |
+| Skeptic | 对关键结论提出反证挑战；只在必要时触发一次定向补证 |
+| Due-diligence Lead | 综合历史财务质量、持续盈利能力和重大负面事项形成结论 |
+| Report Pipeline | 确定性生成分析师口径报告并执行引用、章节和完整性终审 |
 
 ## 证据和数据契约
 
@@ -85,6 +82,8 @@ ipo_product_closure/
 │   ├── extraction/                 # 原始表格与财务抽取
 │   ├── finance/                    # 指标、取证和风险规则
 │   ├── ledger/                     # Evidence/Finding 登记
+│   ├── evaluation/                 # 评测样本、预测与指标计算
+│   ├── runtime/                    # Agent 工具预算、超时和可审计调用轨迹
 │   ├── research/                   # Manager Context、任务和实体注册
 │   ├── review/                     # Topic Reviewer 与 Final Synthesis
 │   ├── report/                     # 材料包、章节路由、Validator、组装
@@ -135,12 +134,14 @@ streamlit run app.py --server.address 0.0.0.0 --server.port 8501
 
 ```env
 IPO_SEARCH_PROVIDER=auto       # auto / tavily / ddgs / off
-IPO_SEARCH_MAX_QUERIES=8
-IPO_LEGAL_SEARCH_MAX_QUERIES=8
+IPO_SEARCH_MAX_QUERIES=12
+IPO_SEARCH_MAX_FETCHED_SOURCES=30
+IPO_LEGAL_SEARCH_MAX_QUERIES=6
+IPO_LEGAL_ENTITY_MAX_QUERIES=10
 TAVILY_API_KEY=
 ```
 
-搜索摘要仅用于发现候选来源。系统会尝试抓取原始网页、进行来源和主体匹配，再登记为正式 Evidence；没有可用来源时明确报告外部核验缺口。
+行业检索覆盖市场、竞争者、下游需求、产业链、技术标准、可比公司、出口与政策；法律检索使用独立且更小的预算。搜索摘要仅用于发现候选来源。系统会尝试抓取原始网页、进行来源和主体匹配，再登记为正式 Evidence；没有可用来源或搜索超时时，当前 Agent 会显式降级，不会中止整条工作流。
 
 ## 输出
 
@@ -165,6 +166,19 @@ data/output/<job_id>/
 └── full_research_run_result.json
 ```
 
+稳定交付入口同时包含：
+
+```text
+data/output/<job_id>/
+├── IPO_Due_Diligence_Report.md
+├── IPO_Due_Diligence_Report.xlsx
+├── evidence.json
+├── agent_trace.json
+└── delivery_manifest.json
+```
+
+财务报表按 `reporting_entity` 区分发行人、子公司及被收购主体，指标和报告主表均优先使用发行人口径，避免跨主体混算。
+
 中间 JSON 是可审计交付物，可用于复核 Agent 状态、问题覆盖、Evidence 链和降级原因。真实招股书、数据库、`.env` 和生成报告属于本地运行数据，默认由 `.gitignore` 排除。
 
 ## 验证
@@ -174,7 +188,15 @@ python -m compileall -q src main.py app.py
 python -m pytest -q
 ```
 
-测试覆盖文档定位、三表与指标、财务规则、Research Ledger、Manager 验收与降级、Company/Industry/Legal 阶段、Evidence 引用、Topic Review、Final Synthesis、章节路由、Validator 和报告组装。
+当前回归基线为 **135 passed**。测试覆盖文档定位、主体识别、三表与指标、财务规则、Research Ledger、Agent 工具预算与降级、Company/Industry/Legal 阶段、Reviewer + Skeptic 闭环、Evidence 引用、评测框架和 Markdown/Excel 交付。
+
+评测脚本：
+
+```bash
+python scripts/eval_prepare_case.py --help
+python scripts/eval_build_prediction.py --help
+python scripts/eval_score.py --help
+```
 
 ## 已知边界
 

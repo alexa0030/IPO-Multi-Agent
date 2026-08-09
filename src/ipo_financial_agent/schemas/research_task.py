@@ -30,6 +30,16 @@ class FinancialResearchTopic(StrEnum):
     OTHER_COMPANY_SPECIFIC = "other_company_specific"
 
 
+class SpecialistResearchTopic(StrEnum):
+    COMPANY_BUSINESS = "company_business"
+    INDUSTRY_COMPETITION = "industry_competition"
+    LEGAL_GOVERNANCE = "legal_governance"
+    OTHER = "other"
+
+
+ResearchTopic = FinancialResearchTopic | SpecialistResearchTopic
+
+
 BASELINE_FINANCIAL_TOPICS = {
     FinancialResearchTopic.PROFIT_CASH_CONVERSION,
     FinancialResearchTopic.RECEIVABLE_REVENUE_MATCH,

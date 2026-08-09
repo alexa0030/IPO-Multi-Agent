@@ -32,13 +32,21 @@ def _format_ratio(value: float | None) -> str:
 class MetricEngine:
     """只用已抽取事实计算指标，不调用大模型。"""
 
-    def calculate(self, document_id: str, facts: list[StatementFact]) -> list[MetricResult]:
+    def calculate(
+        self,
+        document_id: str,
+        facts: list[StatementFact],
+        reporting_entity: str | None = None,
+    ) -> list[MetricResult]:
+        issuer = reporting_entity or next((fact.company for fact in facts if fact.company), None)
         by_tag: dict[str, dict[str, StatementFact]] = defaultdict(dict)
         for fact in facts:
             if fact.value is None or fact.canonical_tag == "other":
                 continue
+            if issuer and fact.reporting_entity and fact.reporting_entity != issuer:
+                continue
             current = by_tag[fact.canonical_tag].get(fact.period)
-            if current is None or fact.confidence > current.confidence:
+            if current is None or self._fact_priority(fact) > self._fact_priority(current):
                 by_tag[fact.canonical_tag][fact.period] = fact
 
         periods = sorted(
@@ -71,6 +79,18 @@ class MetricEngine:
             )
 
         return sorted(metrics, key=lambda item: (_period_sort_key(item.period), item.metric_code))
+
+    @staticmethod
+    def _fact_priority(fact: StatementFact) -> tuple[float, int, int]:
+        """Prefer issuer consolidated facts, then the earliest primary statement.
+
+        Prospectuses may append parent-company or acquired-subsidiary statements
+        after the issuer accounts.  Page order is a deterministic tie-breaker;
+        ratio inputs still retain source_table_id for lineage inspection.
+        """
+        scope = fact.entity_scope or ""
+        scope_priority = 2 if scope == "集团/合并" else 1 if scope else 0
+        return (fact.confidence, scope_priority, -fact.page)
 
     def _growth_metrics(
         self,

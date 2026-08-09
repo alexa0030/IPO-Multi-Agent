@@ -1,0 +1,12 @@
+{
+  "case_id": "hkipo_yonyou_20260715",
+  "company": "用友网络科技股份有限公司",
+  "company_en": "YONYOU NETWORK TECHNOLOGY CO., LTD.",
+  "industry": "enterprise software and cloud services",
+  "split": "validation",
+  "language": "traditional_zh",
+  "source_filename": "sehk26071500937_c.pdf",
+  "expected_page_count": 527,
+  "expected_metrics": [],
+  "expected_findings": []
+}

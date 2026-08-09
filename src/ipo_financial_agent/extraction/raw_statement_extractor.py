@@ -5,6 +5,7 @@ import re
 from collections import defaultdict
 
 from ipo_financial_agent.models import PageData, RawStatementTable, SectionHit
+from ipo_financial_agent.text_normalization import to_simplified
 
 STATEMENT_TYPES = {
     "balance_sheet",
@@ -126,7 +127,10 @@ class RawStatementExtractor:
                 continue
 
             collected_rows, collected_row_pages = self._dedupe_rows_with_pages(collected_rows, collected_row_pages)
-            metadata_text = "\n".join(page_map[p].text[:1800] for p in source_pages)
+            context_pages = range(max(min(page_map), start_page - 4), source_pages[-1] + 1)
+            metadata_text = "\n".join(
+                page_map[p].text[:2400] for p in context_pages if p in page_map
+            )
             table_id = self._table_id(document_id, hit.section_type, source_pages)
             results.append(
                 RawStatementTable(
@@ -134,6 +138,7 @@ class RawStatementExtractor:
                     statement_name=hit.title,
                     statement_type=hit.section_type,
                     company=company,
+                    reporting_entity=self._infer_reporting_entity(metadata_text, company),
                     entity_scope=self._infer_scope(metadata_text),
                     unit=_infer_unit(metadata_text),
                     currency=_infer_currency(metadata_text),
@@ -218,6 +223,23 @@ class RawStatementExtractor:
         if "综合" in compact or "綜合" in compact or "合并" in compact or "合併" in compact:
             return "集团/合并"
         return None
+
+    @staticmethod
+    def _infer_reporting_entity(text: str, issuer_company: str) -> str:
+        """Identify whose accounts these are, independently of consolidation scope."""
+        normalized = to_simplified(text)
+        patterns = [
+            r"(?m)^[ \t]*附录\s*[一二三四五六七八九十]+[A-Z\d]*[ \t]*(?P<entity>[\u4e00-\u9fffA-Za-z（）()·]{2,30})[ \t]*会计师报告[ \t]*$",
+        ]
+        issuer_normalized = to_simplified(issuer_company)
+        for pattern in patterns:
+            match = re.search(pattern, normalized)
+            if not match:
+                continue
+            entity = match.group("entity").strip("：:，,。")
+            if entity and entity not in {"会计师", "申报会计师"}:
+                return issuer_company if entity in issuer_normalized else entity
+        return issuer_company
 
     @staticmethod
     def _table_id(document_id: str, statement_type: str, pages: list[int]) -> str:

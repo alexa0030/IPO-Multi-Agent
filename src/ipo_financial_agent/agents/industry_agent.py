@@ -10,6 +10,12 @@ from ipo_financial_agent.llm.client import OpenAICompatibleClient
 from ipo_financial_agent.llm.prompts_agents import INDUSTRY_ANALYSIS_SYSTEM_PROMPT
 from ipo_financial_agent.models_agent import Evidence, Finding, IndustryAnalysis
 from ipo_financial_agent.tools.search_tool import search_industry_info
+from ipo_financial_agent.tools.domain_tools import (
+    DomainToolContext,
+    build_domain_tool_registry,
+)
+from ipo_financial_agent.runtime import AgentRuntime, RuntimeBudget
+from ipo_financial_agent.text_normalization import to_simplified
 
 _MARKET_KEYWORDS = (
     "市场规模",
@@ -31,6 +37,7 @@ class IndustryAgent:
 
     def __init__(self, client: OpenAICompatibleClient | None = None) -> None:
         self.client = client
+        self.runtime_trace = []
 
     def analyze(
         self,
@@ -42,7 +49,30 @@ class IndustryAgent:
         prospectus_claims, prospectus_evidence = self._extract_prospectus_claims(
             pages or []
         )
-        search_results = search_industry_info(company, business_description)
+        tools = build_domain_tool_registry(
+            DomainToolContext(industry_search=search_industry_info)
+        )
+        runtime = AgentRuntime(
+            registry=tools,
+            role="industry_competition",
+            budget=RuntimeBudget(
+                max_rounds=3,
+                max_tool_calls=5,
+                max_retries=1,
+                timeout_seconds=120,
+            ),
+        )
+        try:
+            search_results = runtime.execute_tool(
+                "search_industry_info",
+                company=company,
+                business_description=business_description,
+            ).results
+        except Exception:
+            # A slow or unavailable search provider must not discard the
+            # prospectus-grounded portion of the industry analysis.
+            search_results = []
+        self.runtime_trace = list(runtime.trace)
         web_evidence = self._web_evidence(search_results)
 
         if self.client is None:
@@ -198,7 +228,7 @@ JSON 格式：
 
     @staticmethod
     def _sentences(text: str) -> list[str]:
-        normalized = re.sub(r"\s+", "", text)
+        normalized = re.sub(r"\s+", "", to_simplified(text))
         return [
             sentence.strip("；;。")
             for sentence in re.split(r"[。；;]", normalized)
@@ -218,7 +248,7 @@ JSON 格式：
             page_number = int(getattr(page, "page", 0) or 0)
             if page_number <= 12:
                 continue
-            text = getattr(page, "text", "") or ""
+            text = to_simplified(getattr(page, "text", "") or "")
             if not any(keyword in text for keyword in _MARKET_KEYWORDS):
                 continue
             head = re.sub(r"\s+", "", text[:500])

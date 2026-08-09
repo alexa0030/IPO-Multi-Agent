@@ -15,6 +15,7 @@ dependencies = [
   "openai>=1.40,<3",
   "langgraph>=0.2,<2",
   "openpyxl>=3.1,<4",
+  "opencc-python-reimplemented>=0.1.7,<1",
   "python-dotenv>=1.0,<2",
 ]
 

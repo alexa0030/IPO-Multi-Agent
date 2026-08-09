@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import re
 from typing import Any
 
 from ipo_financial_agent.models_agent import Evidence, Finding
@@ -42,6 +43,40 @@ def _finding_lines(
     return lines
 
 
+def _compact_summary(value: Any, limit: int = 180) -> str:
+    text = re.sub(r"\[(?:披露事实|发行人解释|分析判断)\]\s*", "", str(value or ""))
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return ""
+    sentence = re.split(r"(?<=[。！？；])", text, maxsplit=1)[0].strip()
+    candidate = sentence or text
+    return candidate if len(candidate) <= limit else candidate[: limit - 1].rstrip() + "…"
+
+
+def _contains_chinese(value: Any) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", str(value or "")))
+
+
+def _financial_finding_summary(item: Any) -> str:
+    """Prefer an analyst-readable Chinese explanation over an internal rule prompt."""
+    for field in ("interpretation", "conclusion", "description"):
+        value = _value(item, field, "")
+        if value and _contains_chinese(value):
+            return _compact_summary(value)
+    return "该核查规则已触发，需结合发行人解释和补充证据进一步判断。"
+
+
+def _useful_executive_point(value: Any) -> str:
+    text = _compact_summary(value)
+    noisy_markers = (
+        "外部公开信息线索",
+        "[PDF]",
+        "http://",
+        "https://",
+    )
+    return "" if any(marker in text for marker in noisy_markers) else text
+
+
 _VERDICT_LABELS = {
     "proceed": "尽调未发现需暂停事项",
     "conditional_proceed": "有条件继续尽调",
@@ -57,17 +92,42 @@ _GRADE_LABELS = {
 _RISK_LABELS = {"Low": "低", "Medium": "中", "High": "高"}
 
 
-def _entity_lines(items: list[Any]) -> list[str]:
+def _entity_lines(items: list[Any], entity_type: str = "general") -> list[str]:
     lines: list[str] = []
     for item in items:
+        name = str(_value(item, "name", "") or "").strip()
+        invalid_fragments = (
+            "商标及技术",
+            "包含公司",
+            "将为董事会",
+            "高级管理层的特",
+            "独立非执行",
+            "务规划及运营",
+            "供独立意见",
+            "中国广东省",
+        )
+        if (
+            len(name) < 2
+            or len(name) > 40
+            or any(fragment in name for fragment in invalid_fragments)
+            or name in {"判断", "公司", "本集团"}
+        ):
+            continue
+        if entity_type == "management" and not (
+            re.search(r"(?:先生|女士|博士|教授)$", name)
+            or re.fullmatch(r"[A-Za-z][A-Za-z .'-]{2,39}", name)
+        ):
+            continue
         citations = " ".join(
             _evidence_label(entry)
             for entry in list(_value(item, "evidence", []) or [])
         )
-        detail = _value(item, "detail", "")
+        detail = _compact_summary(_value(item, "detail", ""), limit=120).replace(
+            "role:", "职务："
+        )
         suffix = f"：{detail}" if detail else ""
         lines.append(
-            f"- {_value(item, 'name', '未命名事项')}{suffix} {citations}".rstrip()
+            f"- {name}{suffix} {citations}".rstrip()
         )
     return lines or ["- 暂无已验证记录。"]
 
@@ -84,7 +144,9 @@ def _markdown_cell(value: Any) -> str:
     return text.replace("|", "\\|") or "—"
 
 
-def _select_primary_statement(tables: list[Any], statement_type: str) -> Any | None:
+def _select_primary_statement(
+    tables: list[Any], statement_type: str, reporting_entity: str | None = None
+) -> Any | None:
     """Select the most complete consolidated table without sample-specific hints."""
     candidates = [
         table
@@ -95,10 +157,16 @@ def _select_primary_statement(tables: list[Any], statement_type: str) -> Any | N
     if not candidates:
         return None
 
-    def score(table: Any) -> tuple[int, int, int]:
+    def score(table: Any) -> tuple[int, int, int, int]:
         scope = str(_value(table, "entity_scope", "") or "")
         consolidated = int(any(word in scope for word in ("合并", "综合", "集团")))
+        table_entity = str(_value(table, "reporting_entity", "") or "")
+        issuer_match = int(
+            bool(reporting_entity)
+            and (not table_entity or table_entity == reporting_entity)
+        )
         return (
+            issuer_match,
             consolidated,
             len(_value(table, "rows", []) or []),
             len(_value(table, "pages", []) or []),
@@ -166,7 +234,7 @@ def _financial_statement_lines(state: dict[str, Any]) -> list[str]:
     ]
     for statement_type, title in _STATEMENT_TITLES.items():
         lines.extend(["", f"#### {title}", ""])
-        table = _select_primary_statement(tables, statement_type)
+        table = _select_primary_statement(tables, statement_type, state.get("company"))
         if table is None:
             lines.append(f"- 未识别到{title}原表；该缺口已保留，禁止模型推测或补造数字。")
             continue
@@ -207,7 +275,7 @@ def _financial_statement_summary_lines(state: dict[str, Any]) -> list[str]:
     ]
     for statement_type, title in _STATEMENT_TITLES.items():
         lines.extend(["", f"#### {title}核心科目", ""])
-        table = _select_primary_statement(tables, statement_type)
+        table = _select_primary_statement(tables, statement_type, state.get("company"))
         if table is None:
             lines.append(f"- 未识别到{title}原表，禁止模型补造数字。")
             continue
@@ -273,32 +341,45 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
     p0_questions = [item for item in questions if _value(item, "priority") == "P0"]
 
     lines = [
-        f"# {company}港股 IPO 公司尽调报告",
+        f"# {company}港股 IPO 尽调分析报告",
         "",
-        "> 本报告由 Research Ledger 确定性渲染。结论必须引用招股书页码、计算结果或真实外部 URL；本报告不包含投资金额、估值上限或退出建议。",
+        "> 本报告基于招股书、结构化财务计算及可追溯公开信息形成。事实、分析判断与待核验事项分别列示；本报告不构成法律意见或投资建议。",
         "",
         "## 一、投资摘要",
         "",
-        f"- 尽调状态：**{_VERDICT_LABELS.get(verdict, verdict or '尚未形成')}**",
-        f"- 过去有没有钱（历史财务质量）：**{_GRADE_LABELS.get(historical_grade, historical_grade)}**",
-        f"- 未来会不会有钱（持续盈利能力）：**{_GRADE_LABELS.get(future_grade, future_grade)}**",
-        f"- 负面事项与重大风险：**{_RISK_LABELS.get(material_risk, material_risk)}**",
-        f"- 已登记证据：{len(evidence_items)} 条；已验证发现：{len(findings)} 条；待补充尽调：{len(questions)} 条",
+        "| 判断维度 | 当前结论 |",
+        "|---|---|",
+        f"| 尽调状态 | **{_VERDICT_LABELS.get(verdict, verdict or '尚未形成')}** |",
+        f"| 历史财务质量 | **{_GRADE_LABELS.get(historical_grade, historical_grade)}** |",
+        f"| 持续盈利能力 | **{_GRADE_LABELS.get(future_grade, future_grade)}** |",
+        f"| 综合风险等级 | **{_RISK_LABELS.get(material_risk, material_risk)}** |",
+        f"| 研究覆盖 | {len(evidence_items)} 条证据、{len(findings)} 项发现、{len(questions)} 项待核验问题 |",
         "",
         "### 摘要要点",
         "",
     ]
+    strength_candidates = [
+        *key_strengths,
+        *(
+            _value(item, "conclusion", "")
+            for item in findings_by_agent.get("company_business", [])
+        ),
+    ]
+    compact_strengths = [
+        text for item in strength_candidates if (text := _useful_executive_point(item))
+    ][:3]
+    compact_risks = [text for item in key_risks[:5] if (text := _compact_summary(item))][:3]
     lines.extend(
-        [f"- 已验证优势/支撑：{item}" for item in key_strengths[:3]]
-        or ["- 已验证优势/支撑：当前证据不足，暂不作正面判断。"]
+        [f"- 核心支撑：{item}" for item in compact_strengths]
+        or ["- 核心支撑：当前证据不足，暂不作正面判断。"]
     )
     lines.extend(
-        [f"- 重点风险/异常：{item}" for item in key_risks[:3]]
-        or ["- 重点风险/异常：暂无已升级为重大风险的结构化事项。"]
+        [f"- 重点关注：{item}" for item in compact_risks]
+        or ["- 重点关注：暂无已升级为重大风险的事项。"]
     )
     lines.extend(
         [
-            f"- P0 核查问题：{len(p0_questions)} 项。",
+            f"- 优先核查事项：{len(p0_questions)} 项。",
             "",
             "## 二、公司基本情况",
             "",
@@ -308,8 +389,8 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
     lines.extend(["### 主要产品与服务", ""])
     lines.extend(_entity_lines(list(_value(prospectus, "main_products", []) or [])))
     lines.extend(["", "### 客户与供应商概览", ""])
-    lines.extend(_entity_lines(list(_value(prospectus, "customers", []) or [])))
-    lines.extend(_entity_lines(list(_value(prospectus, "suppliers", []) or [])))
+    lines.extend(_entity_lines(list(_value(prospectus, "customers", []) or []), "counterparty"))
+    lines.extend(_entity_lines(list(_value(prospectus, "suppliers", []) or []), "counterparty"))
 
     topic_findings = _value(dossier, "topic_findings", {}) or {}
 
@@ -339,7 +420,7 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
     append_dossier_topic("capital_events", "融资、并购及重大资本事件")
     append_dossier_topic("subsidiaries_management", "子公司、经营主体与管理层")
     lines.extend(["", "### 管理层", ""])
-    lines.extend(_entity_lines(list(_value(prospectus, "management_team", []) or [])))
+    lines.extend(_entity_lines(list(_value(prospectus, "management_team", []) or []), "management"))
 
     lines.extend(["", "## 四、商业模式分析", ""])
     business_model = _value(prospectus, "business_model", "")
@@ -410,9 +491,10 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
         lines.append("- 暂无触发财务核查规则的事项。")
     for item in triggered:
         status = _value(item, "assessment_status", "observation")
+        summary = _financial_finding_summary(item)
         lines.append(
             f"- **{_value(item, 'rule_id', '')} / {status_labels.get(status, status)}**："
-            f"{_value(item, 'name', '')}。{_value(item, 'description', '')}"
+            f"{_value(item, 'name', '')}。{summary}"
         )
         explanations = list(_value(item, "possible_explanations", []) or [])
         required = list(_value(item, "required_evidence", []) or [])
@@ -436,7 +518,65 @@ def render_due_diligence_markdown(state: dict[str, Any]) -> str:
     if not findings_by_agent.get("industry_competition"):
         lines.append("- 缺少外部行业与竞争证据，暂不能验证公司增长叙述。")
 
-    lines.extend(["", "## 八、风险分析", "", "### 法务、合规、治理与负面事项", ""])
+    lines.extend(
+        [
+            "",
+            "## 八、风险分析",
+            "",
+            "> 阅读口径：风险分为“重点风险”“需核验预警”和“中性观察”。规则命中只产生核查线索；只有证据充分、影响较高且解释不足时才升级为重点风险。",
+            "",
+            "### 风险优先级总览",
+            "",
+        ]
+    )
+    risk_matrix = list(_value(risk_review, "risk_matrix", []) or [])
+    priority_groups = (
+        (
+            "重点风险",
+            [
+                item
+                for item in risk_matrix
+                if int(_value(item, "score", 0) or 0) >= 6
+                and "observation" not in str(_value(item, "category", ""))
+                and "verification" not in str(_value(item, "category", ""))
+            ],
+        ),
+        (
+            "需核验预警",
+            [
+                item
+                for item in risk_matrix
+                if "observation" not in str(_value(item, "category", ""))
+                and (
+                    3 <= int(_value(item, "score", 0) or 0) < 6
+                    or "verification" in str(_value(item, "category", ""))
+                )
+            ],
+        ),
+        (
+            "中性观察",
+            [
+                item
+                for item in risk_matrix
+                if int(_value(item, "score", 0) or 0) < 3
+                or "observation" in str(_value(item, "category", ""))
+            ],
+        ),
+    )
+    for label, selected in priority_groups:
+        lines.extend([f"#### {label}", ""])
+        if not selected:
+            lines.append("- 暂无事项。")
+            continue
+        for item in selected[:8]:
+            refs = "、".join(str(x) for x in (_value(item, "evidence_refs", []) or []))
+            lines.append(
+                f"- {_value(item, 'risk_name', '')}（概率：{_value(item, 'probability', '')}；"
+                f"影响：{_value(item, 'impact', '')}；评分：{_value(item, 'score', '')}）"
+                + (f"；依据：{refs}" if refs else "")
+            )
+
+    lines.extend(["", "### 法务、合规、治理与负面事项", ""])
     lines.extend(
         _finding_lines(
             findings_by_agent.get("legal_governance", []),

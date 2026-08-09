@@ -93,6 +93,7 @@ class RawStatementFactExtractor:
                             + hashlib.sha1(seed.encode("utf-8")).hexdigest()[:14],
                             document_id=document_id,
                             company=company,
+                            reporting_entity=table.reporting_entity or company,
                             statement_name=table.statement_name,
                             item_name=item_name,
                             canonical_tag=tag,

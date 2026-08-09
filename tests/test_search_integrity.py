@@ -40,7 +40,7 @@ def test_industry_search_budget_is_not_consumed_by_legal_queries(monkeypatch) ->
         "ipo_financial_agent.tools.search_tool._configured_provider",
         lambda: (provider, "capture", "test"),
     )
-    monkeypatch.setenv("IPO_SEARCH_MAX_QUERIES", "8")
+    monkeypatch.setenv("IPO_SEARCH_MAX_QUERIES", "12")
 
     search_industry_info("示例公司", "工业软件")
 
@@ -49,6 +49,11 @@ def test_industry_search_budget_is_not_consumed_by_legal_queries(monkeypatch) ->
         "competitors",
         "customers_suppliers",
         "policy",
+        "downstream_demand",
+        "value_chain",
+        "technology_standards",
+        "comparable_companies",
+        "export_market",
     }
     assert "regulatory" not in provider.topics
 
@@ -59,7 +64,7 @@ def test_legal_search_has_an_independent_query_budget(monkeypatch) -> None:
         "ipo_financial_agent.tools.search_tool._configured_provider",
         lambda: (provider, "capture", "test"),
     )
-    monkeypatch.setenv("IPO_LEGAL_SEARCH_MAX_QUERIES", "8")
+    monkeypatch.setenv("IPO_LEGAL_SEARCH_MAX_QUERIES", "10")
 
     search_legal_governance_info("示例公司")
 
@@ -72,5 +77,7 @@ def test_legal_search_has_an_independent_query_budget(monkeypatch) -> None:
         "accounting_auditor",
         "financing_debt",
         "adverse_media",
+        "employment_compliance",
+        "intellectual_property",
     }
     assert "industry" not in provider.topics

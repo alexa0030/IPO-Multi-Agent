@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
 
-from ipo_financial_agent.schemas import Finding
+from ipo_financial_agent.schemas import (
+    FinancialResearchTopic,
+    Finding,
+    adapt_legacy_finding,
+)
 
 from .evidence_registry import EvidenceRegistry
 
@@ -23,6 +28,24 @@ class FindingRegistry:
             return existing
         self._items[finding.finding_id] = finding
         return finding
+
+    def add_legacy(
+        self,
+        finding: Any,
+        *,
+        task_id: str,
+        topic: FinancialResearchTopic = FinancialResearchTopic.OTHER_COMPANY_SPECIFIC,
+        answered_question_ids: Iterable[str] = (),
+    ) -> Finding:
+        """Adapt and register one legacy Finding with evidence enforcement."""
+        return self.add(
+            adapt_legacy_finding(
+                finding,
+                task_id=task_id,
+                topic=topic,
+                answered_question_ids=answered_question_ids,
+            )
+        )
 
     def extend(self, findings: Iterable[Finding]) -> list[Finding]:
         return [self.add(item) for item in findings]

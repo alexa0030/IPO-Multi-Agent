@@ -1,0 +1,12 @@
+{
+  "case_id": "hkipo_topstar_20260720",
+  "company": "广东拓斯达科技股份有限公司",
+  "company_en": "Guangdong Topstar Technology Co., Ltd.",
+  "industry": "industrial robotics and intelligent manufacturing",
+  "split": "test",
+  "language": "traditional_zh",
+  "source_filename": "sehk26072000041_c.pdf",
+  "expected_page_count": 455,
+  "expected_metrics": [],
+  "expected_findings": []
+}

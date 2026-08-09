@@ -1,0 +1,12 @@
+{
+  "case_id": "hkipo_jingze_20260703",
+  "company": "景泽生物医药（合肥）股份有限公司",
+  "company_en": "Jingze Biopharmaceutical (Hefei) Co., Ltd.",
+  "industry": "biopharmaceuticals",
+  "split": "test",
+  "language": "traditional_zh",
+  "source_filename": "sehk26070302613_c.pdf",
+  "expected_page_count": 461,
+  "expected_metrics": [],
+  "expected_findings": []
+}

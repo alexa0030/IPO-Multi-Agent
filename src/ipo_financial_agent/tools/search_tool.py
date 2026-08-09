@@ -45,11 +45,21 @@ def search_industry_info(
     provider, provider_name, cost_mode = _configured_provider()
     if provider is None:
         return []
-    max_queries = max(1, int(os.getenv("IPO_SEARCH_MAX_QUERIES", "8")))
+    max_queries = max(1, int(os.getenv("IPO_SEARCH_MAX_QUERIES", "12")))
     if provider_name == "ddgs":
         # Public engines throttle cloud IPs; keep the free fallback bounded.
         max_queries = min(max_queries, 3)
-    industry_topics = {"industry", "competitors", "customers_suppliers", "policy"}
+    industry_topics = {
+        "industry",
+        "competitors",
+        "customers_suppliers",
+        "policy",
+        "downstream_demand",
+        "value_chain",
+        "technology_standards",
+        "comparable_companies",
+        "export_market",
+    }
     queries = [
         item
         for item in build_due_diligence_queries(company, business_description)
@@ -62,7 +72,7 @@ def search_industry_info(
         max_queries=max_queries,
     )
     output: list[dict[str, Any]] = []
-    max_sources = max(1, int(os.getenv("IPO_SEARCH_MAX_FETCHED_SOURCES", "20")))
+    max_sources = max(1, int(os.getenv("IPO_SEARCH_MAX_FETCHED_SOURCES", "30")))
     for item in report.results[:max_sources]:
         lead = item.model_dump()
         try:
@@ -99,13 +109,15 @@ def search_legal_governance_info(company: str) -> list[dict[str, Any]]:
         "accounting_auditor",
         "financing_debt",
         "adverse_media",
+        "employment_compliance",
+        "intellectual_property",
     }
     queries = [
         item
         for item in build_due_diligence_queries(company)
         if item.topic in legal_topics
     ]
-    max_queries = max(1, int(os.getenv("IPO_LEGAL_SEARCH_MAX_QUERIES", "8")))
+    max_queries = max(1, int(os.getenv("IPO_LEGAL_SEARCH_MAX_QUERIES", "6")))
     if provider_name == "ddgs":
         max_queries = min(max_queries, 3)
     report = SearchService(provider).run_report(
@@ -160,7 +172,7 @@ def search_legal_entities(queries: list[dict[str, Any]]) -> list[dict[str, Any]]
     provider, provider_name, cost_mode = _configured_provider()
     if provider is None:
         return []
-    max_queries = max(1, int(os.getenv("IPO_LEGAL_ENTITY_MAX_QUERIES", "20")))
+    max_queries = max(1, int(os.getenv("IPO_LEGAL_ENTITY_MAX_QUERIES", "10")))
     selected = queries[:max_queries]
     search_queries = [SearchQuery(query=item["query"], topic=getattr(item.get("research_topic"), "value", str(item.get("research_topic"))), domains=item.get("domains", []), priority=item.get("priority", "P1")) for item in selected]
     report = SearchService(provider).run_report(search_queries, provider_name=provider_name, cost_mode=cost_mode, max_queries=max_queries)

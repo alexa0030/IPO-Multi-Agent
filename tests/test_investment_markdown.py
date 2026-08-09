@@ -53,11 +53,11 @@ def test_markdown_renders_mainline_a_conclusion_and_follow_up() -> None:
         }
     )
 
-    assert "# Example Holdings港股 IPO 公司尽调报告" in report
+    assert "# Example Holdings港股 IPO 尽调分析报告" in report
     assert f"{evidence.evidence_id} | 招股书 P78" in report
     assert "## 十、补充尽调清单" in report
     assert "Provide top-five customer retention data." in report
-    assert "投资金额、估值上限或退出建议" in report
+    assert "不构成法律意见或投资建议" in report
 
 
 def test_markdown_does_not_invent_industry_facts_without_external_evidence() -> None:
@@ -220,6 +220,58 @@ def test_markdown_renders_three_original_financial_statements() -> None:
     assert "#### 现金流量表" in report
     assert "来源：P100" in report
     assert "| 经营活动现金流 | 100 | 80 |" in report
+
+
+def test_markdown_prefers_issuer_statement_over_larger_subsidiary_table() -> None:
+    issuer = RawStatementTable(
+        table_id="issuer_balance",
+        statement_name="综合财务状况表",
+        statement_type="balance_sheet",
+        company="示例公司",
+        reporting_entity="示例公司",
+        entity_scope="集团/合并",
+        unit="人民币百万元",
+        currency="人民币",
+        pages=[22],
+        rows=[["项目", "2024年"], ["发行人现金", "100"]],
+        row_pages=[22, 22],
+        source_file="prospectus.pdf",
+    )
+    subsidiary = RawStatementTable(
+        table_id="target_balance",
+        statement_name="被收购公司资产负债表",
+        statement_type="balance_sheet",
+        company="示例公司",
+        reporting_entity="被收购公司",
+        entity_scope="单体",
+        unit="人民币百万元",
+        currency="人民币",
+        pages=[353, 354],
+        rows=[
+            ["项目", "2024年"],
+            ["子公司现金", "900"],
+            ["子公司存货", "800"],
+            ["子公司负债", "700"],
+        ],
+        row_pages=[353, 353, 354, 354],
+        source_file="prospectus.pdf",
+    )
+
+    report = render_due_diligence_markdown(
+        {
+            "company": "示例公司",
+            "research_evidence": [],
+            "research_findings": [],
+            "diligence_questions": [],
+            "metrics": [],
+            "challenges": [],
+            "raw_statements": [subsidiary, issuer],
+        }
+    )
+
+    assert "来源：P22" in report
+    assert "| 发行人现金 | 100 |" in report
+    assert "| 子公司现金 | 900 |" not in report
 
 
 def test_markdown_uses_prd_v2_eleven_section_contract() -> None:

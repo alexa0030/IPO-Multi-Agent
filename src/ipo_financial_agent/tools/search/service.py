@@ -20,6 +20,14 @@ OFFICIAL_DOMAINS = {
     "sse.com.cn",
     "szse.cn",
     "bse.cn",
+    "gov.cn",
+    "miit.gov.cn",
+    "stats.gov.cn",
+    "cnipa.gov.cn",
+    "court.gov.cn",
+    "zxgk.court.gov.cn",
+    "gsxt.gov.cn",
+    "customs.gov.cn",
 }
 
 PRIMARY_DOMAINS = {"cninfo.com.cn"}
@@ -96,6 +104,7 @@ def build_due_diligence_queries(
         SearchQuery(
             query=industry_query,
             topic="industry",
+            domains=["stats.gov.cn", "miit.gov.cn", "gov.cn"],
             priority="P1",
             purpose="独立验证行业规模、增速和竞争特征",
         ),
@@ -106,8 +115,43 @@ def build_due_diligence_queries(
             purpose="识别可比公司并核对竞争格局",
         ),
         SearchQuery(
+            query=f"{context or company} 下游需求 应用领域 景气度 采购周期",
+            topic="downstream_demand",
+            domains=["stats.gov.cn", "miit.gov.cn", "gov.cn"],
+            priority="P1",
+            purpose="验证下游行业需求、周期与客户采购驱动",
+        ),
+        SearchQuery(
+            query=f"{context or company} 产业链 上游原材料 核心零部件 供应格局",
+            topic="value_chain",
+            priority="P1",
+            purpose="识别上游约束、关键供应商和价值链议价关系",
+        ),
+        SearchQuery(
+            query=f"{context or company} 技术路线 行业标准 国家标准 认证",
+            topic="technology_standards",
+            domains=["miit.gov.cn", "samr.gov.cn", "gov.cn"],
+            priority="P1",
+            purpose="核对技术演进、标准、认证与替代风险",
+        ),
+        SearchQuery(
+            query=f"{context or company} 上市公司 年报 毛利率 研发投入 市场份额",
+            topic="comparable_companies",
+            domains=["hkexnews.hk", "cninfo.com.cn", "sse.com.cn", "szse.cn"],
+            priority="P1",
+            purpose="从可比公司公告建立独立经营与财务参照",
+        ),
+        SearchQuery(
+            query=f"{context or company} 出口 海外市场 贸易数据 关税",
+            topic="export_market",
+            domains=["customs.gov.cn", "gov.cn"],
+            priority="P2",
+            purpose="核查海外需求、出口趋势、关税及地域风险",
+        ),
+        SearchQuery(
             query=f"{company} {context} 产业政策 行业监管 政策风险".strip(),
             topic="policy",
+            domains=["gov.cn", "miit.gov.cn", "samr.gov.cn"],
             priority="P2",
             purpose="识别可能影响未来盈利能力的政策变化",
         ),
@@ -116,6 +160,20 @@ def build_due_diligence_queries(
             topic="adverse_media",
             priority="P0",
             purpose="发现尚未进入正式监管文件的负面线索",
+        ),
+        SearchQuery(
+            query=f"{company} 社会保险 住房公积金 劳动用工 行政处罚",
+            topic="employment_compliance",
+            domains=["creditchina.gov.cn", "gov.cn"],
+            priority="P0",
+            purpose="核查劳动用工、社保与住房公积金合规",
+        ),
+        SearchQuery(
+            query=f"{company} 专利 商标 无效 侵权 行政裁决",
+            topic="intellectual_property",
+            domains=["cnipa.gov.cn", "court.gov.cn"],
+            priority="P1",
+            purpose="核查核心知识产权权属、有效性与争议",
         ),
     ]
 

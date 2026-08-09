@@ -27,54 +27,13 @@ Key architectural principle:
 
 from __future__ import annotations
 
-import operator
-from typing import Annotated, Any, TypedDict
+from typing import Any
 
+from ipo_financial_agent.schemas import IPOResearchState
 
-class IPOAnalysisState(TypedDict, total=False):
-    # --- input ---
-    pdf_path: str
-    company: str
-    document_id: str
-    llm_mode: str
-
-    # --- document layer (set by document_prepare) ---
-    pages: list[Any]
-    section_hits: list[Any]
-    candidate_pages: list[Any]
-    topic_page_groups: dict[str, list[Any]]
-
-    # --- research plan (set by research_manager) ---
-    research_plan: Any  # ResearchPlan
-    agent_messages: Annotated[list, operator.add]  # auto-merge from parallel branches
-    research_evidence: Annotated[list, operator.add]
-    research_findings: Annotated[list, operator.add]
-    open_questions: Annotated[list, operator.add]
-    challenges: list
-    followup_round: int
-    diligence_questions: list[Any]
-    due_diligence_conclusion: Any
-
-    # --- Financial Analyst Agent outputs (Tool-Augmented, single node) ---
-    raw_statements: list[Any]  # from extraction tool
-    extraction_result: Any  # FinancialExtractionResult (facts + notes)
-    metrics: list[Any]  # from metric engine tool
-    risks: list[Any]  # from 6-rule risk engine tool
-    financial_findings: list[Any]  # from 20-rule forensic engine tool
-    rule_trigger_events: list[Any]  # subset of findings where triggered=True
-    analysis: Any  # AnalysisResult (LLM reasoning / offline summary)
-
-    # --- parallel agent outputs ---
-    prospectus_analysis: Any  # ProspectusAnalysis
-    industry_analysis: Any  # IndustryAnalysis
-    legal_governance_analysis: Any  # LegalGovernanceAnalysis
-
-    # --- fan-in + final ---
-    risk_review: Any  # RiskReview
-    final_report: str  # final markdown report
-    report_review: Any  # ReportReview
-    report_revision_performed: bool
-    artifacts: Any
+# Backward-compatible name for callers that imported the original graph-local
+# type. The schema module is now the single source of truth.
+IPOAnalysisState = IPOResearchState
 
 
 # Node execution order (also used by _SequentialFallback)
@@ -106,20 +65,30 @@ class _SequentialFallback:
         current = dict(state)
         if "agent_messages" not in current:
             current["agent_messages"] = []
-        for key in ("research_evidence", "research_findings", "open_questions"):
+        for key in (
+            "research_evidence",
+            "research_findings",
+            "canonical_evidence",
+            "canonical_findings",
+            "tool_call_trace",
+            "open_questions",
+        ):
             current.setdefault(key, [])
         current.setdefault("challenges", [])
         current.setdefault("followup_round", 0)
-        for name in ORDERED_NODES:
+        def run(name: str) -> None:
             node_fn = self.nodes.get(name)
             if node_fn is None:
-                continue
+                return
             update = node_fn(current) or {}
             # Manual merge for append-only reducer fields.
             for key in (
                 "agent_messages",
                 "research_evidence",
                 "research_findings",
+                "canonical_evidence",
+                "canonical_findings",
+                "tool_call_trace",
                 "open_questions",
             ):
                 if key in update:
@@ -127,6 +96,17 @@ class _SequentialFallback:
                     existing.extend(update.pop(key))
                     current[key] = existing
             current.update(update)
+
+        for name in ORDERED_NODES[:8]:
+            run(name)
+
+        if current.get("challenges") and current.get("followup_round", 0) < 1:
+            run("run_targeted_followup")
+            run("run_risk_reviewer")
+            run("run_skeptic")
+
+        for name in ORDERED_NODES[9:]:
+            run(name)
         return current
 
 
@@ -186,7 +166,9 @@ def build_graph(nodes: dict[str, Any]):
             "run_due_diligence_lead": "run_due_diligence_lead",
         },
     )
-    graph.add_edge("run_targeted_followup", "run_due_diligence_lead")
+    # New evidence must be reviewed and challenged again before synthesis.
+    # followup_round bounds the loop when the second skeptic pass completes.
+    graph.add_edge("run_targeted_followup", "run_risk_reviewer")
     graph.add_edge("run_due_diligence_lead", "run_report_writer")
     graph.add_edge("run_report_writer", "run_report_reviewer")
     graph.add_edge("run_report_reviewer", "run_report_revision")

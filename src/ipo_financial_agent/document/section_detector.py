@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from ipo_financial_agent.models import PageData, SectionHit
+from ipo_financial_agent.text_normalization import normalize_search_text
 
 SECTION_PATTERNS: dict[str, list[tuple[str, str]]] = {
     "balance_sheet": [
@@ -62,7 +63,7 @@ def _is_actual_statement_match(section_type: str, compact_text: str, match: re.M
 def detect_sections(pages: list[PageData]) -> list[SectionHit]:
     hits: list[SectionHit] = []
     for page in pages:
-        head = page.text[:2200]
+        head = normalize_search_text(page.text[:2200])
         compact = re.sub(r"\s+", "", head)
         for section_type, patterns in SECTION_PATTERNS.items():
             for title, pattern in patterns:

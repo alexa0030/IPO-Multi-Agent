@@ -32,6 +32,7 @@ class RawStatementTable(BaseModel):
     statement_name: str
     statement_type: str
     company: str
+    reporting_entity: str | None = None
     entity_scope: str | None = None
     unit: str | None = None
     currency: str | None = None
@@ -87,6 +88,7 @@ class StatementFact(BaseModel):
     fact_id: str
     document_id: str
     company: str
+    reporting_entity: str | None = None
     statement_name: str
     item_name: str
     canonical_tag: CanonicalTag = "other"

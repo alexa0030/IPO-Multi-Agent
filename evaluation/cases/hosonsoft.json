@@ -1,0 +1,76 @@
+{
+  "case_id": "hkipo_hosonsoft_20260514",
+  "company": "深圳市汉森软件股份有限公司",
+  "company_en": "Shenzhen Hosonsoft Co., Ltd.",
+  "industry": "printing software and industrial digitalization",
+  "split": "development",
+  "language": "simplified_zh",
+  "source_filename": "2026-05-14：深圳市漢森軟件股份有限公司：申請版本（第一次呈交）（全文檔案）.pdf",
+  "expected_page_count": 504,
+  "expected_metrics": [
+    {"metric_code": "revenue", "period": "2025", "value": 596909, "unit": "CNY thousand", "currency": "CNY", "page": 21, "tolerance": 0.01, "status": "verified"},
+    {"metric_code": "gross_profit", "period": "2025", "value": 325279, "unit": "CNY thousand", "currency": "CNY", "page": 21, "tolerance": 0.01, "status": "verified"},
+    {"metric_code": "net_profit", "period": "2025", "value": 142277, "unit": "CNY thousand", "currency": "CNY", "page": 21, "tolerance": 0.01, "status": "verified"},
+    {"metric_code": "research_expense", "period": "2025", "value": -104113, "unit": "CNY thousand", "currency": "CNY", "page": 21, "tolerance": 0.01, "status": "verified"},
+    {"metric_code": "gross_margin", "period": "2025", "value": 54.5, "unit": "percent", "page": 23, "tolerance": 0.5, "tolerance_mode": "absolute", "status": "verified"},
+    {"metric_code": "net_margin", "period": "2025", "value": 23.8, "unit": "percent", "page": 23, "tolerance": 0.5, "tolerance_mode": "absolute", "status": "verified"},
+    {"metric_code": "operating_cash_flow", "period": "2025", "value": 84389, "unit": "CNY thousand", "currency": "CNY", "page": 23, "tolerance": 0.01, "status": "verified"},
+    {"metric_code": "current_ratio", "period": "2025", "value": 3.7, "unit": "ratio", "page": 23, "tolerance": 0.05, "tolerance_mode": "absolute", "status": "verified"}
+  ],
+  "expected_findings": [
+    {
+      "topic": "customer_concentration",
+      "expected_fact": "2025年前五大客户收入占比28.6%，最大客户占比9.6%。",
+      "risk_level": "medium",
+      "pages": [18],
+      "evidence_excerpt": "来自前五大客户的收入为人民币170.7百万元，占2025年总收入的28.6%；最大客户占9.6%。",
+      "should_challenge": false,
+      "status": "verified"
+    },
+    {
+      "topic": "margin_decline",
+      "expected_fact": "整体毛利率由2023年的56.9%下降至2025年的54.5%，净利润率降至23.8%。",
+      "risk_level": "medium",
+      "pages": [21, 22, 23],
+      "evidence_excerpt": "整体毛利率为56.9%、55.6%及54.5%，2025年净利润率为23.8%。",
+      "should_challenge": false,
+      "status": "verified"
+    },
+    {
+      "topic": "inventory_growth",
+      "expected_fact": "存货由2023年的人民币34.0百万元增至2025年的137.5百万元，存在积压和过时风险。",
+      "risk_level": "high",
+      "pages": [50, 51],
+      "evidence_excerpt": "截至2023年、2024年及2025年末，存货分别为人民币34.0百万元、42.1百万元及137.5百万元。",
+      "should_challenge": true,
+      "status": "verified"
+    },
+    {
+      "topic": "third_party_payment",
+      "expected_fact": "2025年第三方付款增至人民币13.6百万元，占总收入2.3%，并带来退款、清算和洗钱风险。",
+      "risk_level": "high",
+      "pages": [52],
+      "evidence_excerpt": "2025年第三方付款安排项下付款总额为人民币13.6百万元，约占总收入的2.3%。",
+      "should_challenge": true,
+      "status": "verified"
+    },
+    {
+      "topic": "social_insurance_noncompliance",
+      "expected_fact": "往绩记录期间未完全缴纳社会保险及住房公积金，可能被要求补缴、支付滞纳金或罚款。",
+      "risk_level": "high",
+      "pages": [52],
+      "evidence_excerpt": "公司并无完全遵守相关中国法律及法规为雇员缴纳社会保险及住房公积金。",
+      "should_challenge": true,
+      "status": "verified"
+    },
+    {
+      "topic": "raw_material_supply",
+      "expected_fact": "2025年原材料成本占销售成本77.0%，供应或价格波动可能影响交付与盈利能力。",
+      "risk_level": "high",
+      "pages": [44],
+      "evidence_excerpt": "2025年原材料成本占销售成本的77.0%，供应短缺或延迟可能导致采购成本增加及生产中断。",
+      "should_challenge": false,
+      "status": "verified"
+    }
+  ]
+}

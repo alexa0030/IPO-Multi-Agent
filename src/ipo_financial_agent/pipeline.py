@@ -28,6 +28,12 @@ from ipo_financial_agent.models import (
     PipelineArtifacts,
 )
 from ipo_financial_agent.models_agent import AgentMessage, Evidence
+from ipo_financial_agent.ledger import EvidenceRegistry, FindingRegistry
+from ipo_financial_agent.schemas import (
+    adapt_legacy_challenge,
+    adapt_legacy_evidence,
+    adapt_legacy_research_patch,
+)
 from ipo_financial_agent.output.excel_writer import export_financial_workbook
 from ipo_financial_agent.output.delivery_writer import (
     enrich_due_diligence_workbook,
@@ -36,10 +42,12 @@ from ipo_financial_agent.output.delivery_writer import (
 from ipo_financial_agent.output.report_writer import write_markdown_report
 from ipo_financial_agent.rendering import render_investment_markdown
 from ipo_financial_agent.research import (
+    build_financial_agent_result,
     financial_research_patch,
     industry_research_patch,
     legal_governance_research_patch,
     prospectus_research_patch,
+    register_financial_evidence,
 )
 from ipo_financial_agent.storage.evidence_store import EvidenceStore
 from ipo_financial_agent.storage.json_store import write_json
@@ -77,6 +85,8 @@ class IPOFinancialPipeline:
                 "open_questions": [],
                 "challenges": [],
                 "followup_round": 0,
+                "review_llm_budget": {"max_calls": 1, "used_calls": 0},
+                "tool_call_trace": [],
             }
         )
         return result["artifacts"]
@@ -236,6 +246,21 @@ class IPOFinancialPipeline:
             for f in triggered[:6]
         )
         patch = financial_research_patch(findings)
+        extraction_result = result.get(
+            "extraction_result", FinancialExtractionResult()
+        )
+        metrics = result.get("metrics", [])
+        financial_task = ResearchManagerAgent.plan_financial_task(state["company"])
+        canonical_financial_evidence = register_financial_evidence(
+            facts=extraction_result.statement_facts,
+            metrics=metrics,
+        )
+        canonical_financial_result = build_financial_agent_result(
+            task=financial_task,
+            rules=findings,
+            evidence=canonical_financial_evidence,
+            metrics=metrics,
+        )
 
         print(
             f"[financial-agent] Tool-Augmented analysis complete: "
@@ -316,6 +341,9 @@ class IPOFinancialPipeline:
             "rule_trigger_events": triggered,
             "research_evidence": patch.evidence,
             "research_findings": patch.findings,
+            "canonical_evidence": canonical_financial_result.evidences,
+            "canonical_findings": canonical_financial_result.findings,
+            "canonical_financial_result": canonical_financial_result,
             "open_questions": patch.open_questions,
             "agent_messages": [msg],
         }
@@ -341,6 +369,11 @@ class IPOFinancialPipeline:
         customers = result.customers or []
         key_claims = result.key_claims or []
         patch = prospectus_research_patch(result)
+        canonical_patch = adapt_legacy_research_patch(
+            patch,
+            task_id="TASK_COMPANY_BOUNDARY",
+            agent="company_business",
+        )
         dossier_counts = {
             topic: len(items)
             for topic, items in result.dossier.topic_findings.items()
@@ -391,6 +424,8 @@ class IPOFinancialPipeline:
             "prospectus_analysis": result,
             "research_evidence": patch.evidence,
             "research_findings": patch.findings,
+            "canonical_evidence": canonical_patch.evidences,
+            "canonical_findings": canonical_patch.findings,
             "open_questions": patch.open_questions,
             "agent_messages": [msg],
         }
@@ -412,6 +447,11 @@ class IPOFinancialPipeline:
             pages=state.get("pages", []),
         )
         patch = industry_research_patch(result)
+        canonical_patch = adapt_legacy_research_patch(
+            patch,
+            task_id="TASK_INDUSTRY_BOUNDARY",
+            agent="industry_competition",
+        )
         web_evidence_count = sum(
             1 for item in result.evidence if getattr(item, "source_type", "") == "web"
         )
@@ -453,6 +493,9 @@ class IPOFinancialPipeline:
             "industry_analysis": result,
             "research_evidence": patch.evidence,
             "research_findings": patch.findings,
+            "canonical_evidence": canonical_patch.evidences,
+            "canonical_findings": canonical_patch.findings,
+            "tool_call_trace": agent.runtime_trace,
             "open_questions": patch.open_questions,
             "agent_messages": [msg],
         }
@@ -460,11 +503,17 @@ class IPOFinancialPipeline:
     def _run_legal_governance_agent(
         self, state: dict[str, Any]
     ) -> dict[str, Any]:
-        result = LegalGovernanceAgent().analyze(
+        agent = LegalGovernanceAgent()
+        result = agent.analyze(
             company=state["company"],
             pages=state.get("pages", []),
         )
         patch = legal_governance_research_patch(result)
+        canonical_patch = adapt_legacy_research_patch(
+            patch,
+            task_id="TASK_LEGAL_BOUNDARY",
+            agent="legal_governance",
+        )
         legal_preview = "；".join(
             item.conclusion[:220] for item in patch.findings[:3]
         )
@@ -492,6 +541,9 @@ class IPOFinancialPipeline:
             "legal_governance_analysis": result,
             "research_evidence": patch.evidence,
             "research_findings": patch.findings,
+            "canonical_evidence": canonical_patch.evidences,
+            "canonical_findings": canonical_patch.findings,
+            "tool_call_trace": agent.runtime_trace,
             "open_questions": patch.open_questions,
             "agent_messages": [msg],
         }
@@ -500,13 +552,56 @@ class IPOFinancialPipeline:
     # Fan-in: Investment Committee Agent
     # ========================
 
+    @staticmethod
+    def _review_needs_llm(state: dict[str, Any]) -> bool:
+        """Escalate only material, unexplained evidence conflicts to an LLM."""
+        canonical_high = any(
+            getattr(item, "risk_level", "") == "high"
+            for item in state.get("canonical_findings", [])
+        )
+        unexplained_financial = any(
+            getattr(item, "severity", "") in {"high", "critical"}
+            and getattr(item, "assessment_status", "observation")
+            in {"unexplained", "contradiction"}
+            for item in state.get("financial_findings", [])
+        )
+        high_rule_alert = any(
+            getattr(item, "severity", "") in {"high", "critical"}
+            for item in state.get("risks", [])
+        )
+        return canonical_high or unexplained_financial or high_rule_alert
+
     def _run_risk_reviewer(self, state: dict[str, Any]) -> dict[str, Any]:
         """Investment Committee Agent: cross-agent reasoning + contradiction detection."""
+        canonical_evidence = state.get("canonical_evidence", [])
+        canonical_findings = state.get("canonical_findings", [])
+        canonical_registry = EvidenceRegistry(canonical_evidence)
+        FindingRegistry(canonical_registry).extend(canonical_findings)
+        canonical_status = {
+            "validated": True,
+            "evidence_count": len(canonical_evidence),
+            "finding_count": len(canonical_findings),
+        }
+
+        # Compatibility ledger for renderers not yet migrated. The canonical
+        # reference check above is the first quality gate.
         ledger = EvidenceStore(state.get("research_evidence", []))
         ledger.add_findings(state.get("research_findings", []))
+        review_budget = dict(
+            state.get("review_llm_budget", {"max_calls": 1, "used_calls": 0})
+        )
+        budget_available = review_budget.get("used_calls", 0) < review_budget.get(
+            "max_calls", 1
+        )
+        use_review_llm = (
+            self._review_needs_llm(state)
+            and budget_available
+            and self._should_use_llm(state["llm_mode"])
+        )
         client = None
-        if self._should_use_llm(state["llm_mode"]):
+        if use_review_llm:
             client = OpenAICompatibleClient(self.settings)
+            review_budget["used_calls"] = review_budget.get("used_calls", 0) + 1
 
         agent = RiskReviewerAgent(client)
 
@@ -527,7 +622,11 @@ class IPOFinancialPipeline:
             financial_metrics=state.get("metrics", []),
             financial_findings=state.get("financial_findings", []),
             agent_messages=agent_messages,
-            research_findings=state.get("research_findings", []),
+            research_findings=(
+                canonical_findings
+                if canonical_findings
+                else state.get("research_findings", [])
+            ),
             open_questions=state.get("open_questions", []),
         )
 
@@ -563,6 +662,7 @@ class IPOFinancialPipeline:
                 "risk_matrix_count": risk_matrix_count,
                 "question_count": len(result.investment_questions),
                 "messages_received": len(agent_messages),
+                "canonical_ledger": canonical_status,
                 "findings_received": len(
                     [
                         m
@@ -573,7 +673,12 @@ class IPOFinancialPipeline:
             },
         )
 
-        return {"risk_review": result, "agent_messages": [msg]}
+        return {
+            "risk_review": result,
+            "canonical_ledger_status": canonical_status,
+            "review_llm_budget": review_budget,
+            "agent_messages": [msg],
+        }
 
     def _run_skeptic(self, state: dict[str, Any]) -> dict[str, Any]:
         risk_review = state.get("risk_review")
@@ -583,13 +688,31 @@ class IPOFinancialPipeline:
             open_questions=state.get("open_questions", []),
         )
         print(f"[skeptic] challenges={len(challenges)}", flush=True)
-        return {"challenges": challenges}
+        if state.get("followup_round", 0) >= 1 and state.get("canonical_challenges"):
+            canonical_challenges = [
+                item.model_copy(
+                    update={
+                        "status": (
+                            "resolved" if item.response_finding_ids else "unresolved"
+                        )
+                    }
+                )
+                for item in state["canonical_challenges"]
+            ]
+        else:
+            canonical_challenges = [adapt_legacy_challenge(item) for item in challenges]
+        return {
+            "challenges": challenges,
+            "canonical_challenges": canonical_challenges,
+        }
 
     def _run_targeted_followup(self, state: dict[str, Any]) -> dict[str, Any]:
         """Route one bounded challenge round to prospectus retrieval or web search."""
         if not state.get("challenges"):
             return {"followup_round": state.get("followup_round", 0)}
         evidence: list[Evidence] = []
+        canonical_evidence = []
+        canonical_response_ids: dict[str, list[str]] = {}
         unresolved: list[str] = []
         messages: list[AgentMessage] = []
         for challenge in state.get("challenges", []):
@@ -626,6 +749,14 @@ class IPOFinancialPipeline:
                     )
                 )
             evidence.extend(challenge_evidence)
+            converted_evidence = [
+                adapt_legacy_evidence(item, created_by=challenge.target_agent)
+                for item in challenge_evidence
+            ]
+            canonical_evidence.extend(converted_evidence)
+            canonical_response_ids[challenge.challenge_id] = [
+                item.evidence_id for item in converted_evidence
+            ]
             if not challenge_evidence:
                 unresolved.append(challenge.question)
             messages.append(
@@ -652,6 +783,18 @@ class IPOFinancialPipeline:
         )
         return {
             "research_evidence": evidence,
+            "canonical_evidence": canonical_evidence,
+            "canonical_challenges": [
+                item.model_copy(
+                    update={
+                        "response_evidence_ids": canonical_response_ids.get(
+                            item.challenge_id, []
+                        ),
+                        "status": "open",
+                    }
+                )
+                for item in state.get("canonical_challenges", [])
+            ],
             "followup_round": 1,
             "agent_messages": messages,
         }
@@ -685,7 +828,10 @@ class IPOFinancialPipeline:
                     source_type="prospectus",
                     title="质疑回路定向检索线索",
                     content=text[:800],
-                    page_number=getattr(page, "page_number", None),
+                    page_number=(
+                        getattr(page, "page_number", None)
+                        or getattr(page, "page", None)
+                    ),
                     confidence=0.65,
                     metadata={"topic": "targeted_followup", "challenge_id": challenge_id},
                 )
@@ -693,9 +839,18 @@ class IPOFinancialPipeline:
         return result
 
     def _run_due_diligence_lead(self, state: dict[str, Any]) -> dict[str, Any]:
+        canonical_status = {
+            item.challenge_id: item.status
+            for item in state.get("canonical_challenges", [])
+        }
+        active_challenges = [
+            item
+            for item in state.get("challenges", [])
+            if canonical_status.get(item.challenge_id, "open") != "resolved"
+        ]
         conclusion, questions = DueDiligenceLeadAgent().synthesize(
             findings=state.get("research_findings", []),
-            challenges=state.get("challenges", []),
+            challenges=active_challenges,
             risk_review=state.get("risk_review"),
             metrics=state.get("metrics", []),
             financial_findings=state.get("financial_findings", []),
@@ -938,6 +1093,12 @@ class IPOFinancialPipeline:
                 "findings": state.get("research_findings", []),
                 "open_questions": state.get("open_questions", []),
                 "challenges": state.get("challenges", []),
+                "canonical_evidence": state.get("canonical_evidence", []),
+                "canonical_findings": state.get("canonical_findings", []),
+                "canonical_challenges": state.get("canonical_challenges", []),
+                "canonical_ledger_status": state.get(
+                    "canonical_ledger_status", {}
+                ),
             },
         )
 
@@ -1144,8 +1305,21 @@ class IPOFinancialPipeline:
                 "research_evidence_count": len(state.get("research_evidence", [])),
                 "research_finding_count": len(state.get("research_findings", [])),
                 "open_question_count": len(state.get("open_questions", [])),
-                "challenge_count": len(state.get("challenges", [])),
-                "unresolved_challenge_count": len(state.get("challenges", [])),
+                "challenge_count": len(state.get("canonical_challenges", [])),
+                "resolved_challenge_count": len(
+                    [
+                        item
+                        for item in state.get("canonical_challenges", [])
+                        if item.status == "resolved"
+                    ]
+                ),
+                "unresolved_challenge_count": len(
+                    [
+                        item
+                        for item in state.get("canonical_challenges", [])
+                        if item.status in {"open", "unresolved"}
+                    ]
+                ),
                 "followup_round": state.get("followup_round", 0),
                 "due_diligence_verdict": getattr(
                     state.get("due_diligence_conclusion"), "verdict", None

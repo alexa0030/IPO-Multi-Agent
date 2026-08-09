@@ -640,18 +640,36 @@ class RiskReviewerAgent:
         ]
 
     @staticmethod
-    def _summarize_ledger_risks(findings: list[Finding] | None) -> list[dict]:
+    def _summarize_ledger_risks(findings: list[Any] | None) -> list[dict]:
         output: list[dict] = []
         for finding in findings or []:
-            if not finding.risks:
+            legacy_risks = list(getattr(finding, "risks", []) or [])
+            risk_level = str(getattr(finding, "risk_level", ""))
+            required_checks = list(getattr(finding, "required_checks", []) or [])
+            risks = legacy_risks or (
+                required_checks if risk_level in {"medium", "high"} else []
+            )
+            if not risks:
                 continue
+            agent_name = str(
+                getattr(finding, "agent_name", "")
+                or getattr(finding, "agent", "")
+            )
+            conclusion = str(
+                getattr(finding, "conclusion", "")
+                or getattr(finding, "statement", "")
+            )
+            evidence_strength = str(
+                getattr(finding, "evidence_strength", "")
+                or getattr(finding, "confidence", "")
+            )
             output.append(
                 {
-                    "title": f"[{finding.agent_name}] {finding.conclusion[:120]}",
-                    "agent_name": finding.agent_name,
-                    "evidence_strength": finding.evidence_strength,
+                    "title": f"[{agent_name}] {conclusion[:120]}",
+                    "agent_name": agent_name,
+                    "evidence_strength": evidence_strength,
                     "evidence_ids": finding.evidence_ids,
-                    "risks": finding.risks,
+                    "risks": risks,
                     "pending_verification": all(
                         str(risk).startswith("待核实") for risk in finding.risks
                     ),

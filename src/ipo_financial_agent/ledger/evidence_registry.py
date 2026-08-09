@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
 
-from ipo_financial_agent.schemas import Evidence
+from ipo_financial_agent.schemas import Evidence, adapt_legacy_evidence
 
 
 class EvidenceRegistry:
@@ -12,6 +13,15 @@ class EvidenceRegistry:
         self._items: dict[str, Evidence] = {}
         for item in evidence:
             self.add(item)
+
+    @classmethod
+    def from_legacy(
+        cls, evidence: Iterable[Any], *, created_by: str
+    ) -> "EvidenceRegistry":
+        """Build a canonical registry through the strict legacy boundary."""
+        return cls(
+            adapt_legacy_evidence(item, created_by=created_by) for item in evidence
+        )
 
     def add(self, evidence: Evidence) -> Evidence:
         existing = self._items.get(evidence.evidence_id)

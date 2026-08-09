@@ -8,6 +8,12 @@ from typing import Any, ClassVar
 
 from ipo_financial_agent.models_agent import Evidence, LegalGovernanceAnalysis
 from ipo_financial_agent.tools.search_tool import search_legal_governance_info
+from ipo_financial_agent.tools.domain_tools import (
+    DomainToolContext,
+    build_domain_tool_registry,
+)
+from ipo_financial_agent.runtime import AgentRuntime, RuntimeBudget
+from ipo_financial_agent.text_normalization import normalize_search_text
 
 
 class LegalGovernanceAgent:
@@ -45,7 +51,12 @@ class LegalGovernanceAgent:
         "accounting_auditor": "financial_reporting_integrity",
         "financing_debt": "financing_debt_guarantees",
         "adverse_media": "adverse_information",
+        "employment_compliance": "employment_compliance",
+        "intellectual_property": "licensing_ip_data_risks",
     }
+
+    def __init__(self) -> None:
+        self.runtime_trace = []
 
     def analyze(self, *, company: str, pages: list[Any]) -> LegalGovernanceAnalysis:
         grouped: dict[str, list[Evidence]] = defaultdict(list)
@@ -58,12 +69,17 @@ class LegalGovernanceAgent:
                 or self._is_reference_page(text)
             ):
                 continue
-            lowered = text.lower()
+            lowered = normalize_search_text(text)
             for category, keywords in self.CATEGORY_KEYWORDS.items():
                 if len(grouped[category]) >= self.MAX_EVIDENCE_PER_CATEGORY:
                     continue
                 matched = next(
-                    (keyword for keyword in keywords if keyword.lower() in lowered), None
+                    (
+                        keyword
+                        for keyword in keywords
+                        if normalize_search_text(keyword) in lowered
+                    ),
+                    None,
                 )
                 if not matched:
                     continue
@@ -98,7 +114,29 @@ class LegalGovernanceAgent:
                 )
 
         prospectus_evidence = [item for items in grouped.values() for item in items]
-        web_results = search_legal_governance_info(company)
+        tools = build_domain_tool_registry(
+            DomainToolContext(legal_search=search_legal_governance_info)
+        )
+        runtime = AgentRuntime(
+            registry=tools,
+            role="legal_governance",
+            budget=RuntimeBudget(
+                max_rounds=3,
+                max_tool_calls=5,
+                max_retries=1,
+                timeout_seconds=120,
+            ),
+        )
+        try:
+            web_results = runtime.execute_tool(
+                "search_legal_governance_info",
+                company=company,
+            ).results
+        except Exception:
+            # External research is enrichment: retain prospectus analysis and
+            # expose the failed tool trace instead of aborting the whole graph.
+            web_results = []
+        self.runtime_trace = list(runtime.trace)
         web_evidence: list[Evidence] = []
         for result in web_results:
             url = str(result.get("url", "")).strip()
@@ -179,7 +217,9 @@ class LegalGovernanceAgent:
     @staticmethod
     def _excerpt(text: str, keyword: str, radius: int = 180) -> str:
         normalized = re.sub(r"\s+", " ", text).strip()
-        index = normalized.lower().find(keyword.lower())
+        index = normalize_search_text(normalized).find(
+            normalize_search_text(keyword)
+        )
         if index < 0:
             return normalized[: radius * 2]
         start = max(0, index - radius)

@@ -4,14 +4,14 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, Field, model_validator
 
-from .research_task import AgentName, FinancialResearchTopic
+from .research_task import AgentName, ResearchTopic
 
 
 class Finding(BaseModel):
     finding_id: str = Field(min_length=1)
     task_id: str = Field(min_length=1)
     agent: AgentName
-    topic: FinancialResearchTopic
+    topic: ResearchTopic
     answered_question_ids: list[str] = Field(default_factory=list)
     title: str = Field(min_length=1)
     statement: str = Field(min_length=1)
@@ -39,3 +39,10 @@ class Finding(BaseModel):
         self.required_checks = list(dict.fromkeys(self.required_checks))
         self.cross_check_topics = list(dict.fromkeys(self.cross_check_topics))
         return self
+
+    @property
+    def risks(self) -> list[str]:
+        """Read-only compatibility view for the legacy risk synthesizer."""
+        if self.risk_level not in {"medium", "high"}:
+            return []
+        return self.required_checks or self.cross_check_topics

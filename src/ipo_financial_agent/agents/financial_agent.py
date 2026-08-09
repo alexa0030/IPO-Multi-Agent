@@ -239,7 +239,8 @@ class FinancialAnalysisAgent:
         self, *, document_id, facts
     ) -> list[MetricResult]:
         """Tool 4: Compute financial ratios and growth metrics."""
-        return self._metric_engine.calculate(document_id, facts)
+        issuer = next((fact.company for fact in facts if fact.company), None)
+        return self._metric_engine.calculate(document_id, facts, reporting_entity=issuer)
 
     def _tool_scan_risk_rules(
         self, *, document_id, metrics, facts

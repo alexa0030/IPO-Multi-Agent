@@ -52,6 +52,12 @@ def canonical_tag_for_item(item_name: str) -> str:
     compact = "".join(item_name.split()).lower()
     candidates: list[tuple[int, str]] = []
     for tag, aliases in CANONICAL_PATTERNS:
+        if tag == "current_assets" and ("非流动资产" in compact or "非流動資產" in compact):
+            continue
+        if tag == "current_liabilities" and (
+            "非流动负债" in compact or "非流動負債" in compact
+        ):
+            continue
         for alias in aliases:
             alias_compact = "".join(alias.split()).lower()
             if alias_compact in compact:

@@ -3,14 +3,32 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any
 
 from openpyxl import load_workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Alignment, Font, PatternFill
 
 
 _HEADER_FILL = PatternFill("solid", fgColor="17365D")
 _HEADER_FONT = Font(color="FFFFFF", bold=True)
+_NON_XML_RE = re.compile(
+    r"[^\x09\x0A\x0D\x20-\uD7FF\uE000-\uFFFD\U00010000-\U0010FFFF]"
+)
+
+
+def _excel_value(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    # Web extraction can return PDF/binary control characters. Excel rejects
+    # them and limits a cell to 32,767 characters.
+    cleaned = ILLEGAL_CHARACTERS_RE.sub("", value)
+    return _NON_XML_RE.sub("", cleaned)[:32767]
+
+
+def _append(sheet: Any, values: list[Any]) -> None:
+    sheet.append([_excel_value(value) for value in values])
 
 
 def _value(item: Any, name: str, default: Any = None) -> Any:
@@ -23,7 +41,7 @@ def _prepare_sheet(workbook: Any, title: str, headers: list[str]) -> Any:
     if title in workbook.sheetnames:
         del workbook[title]
     sheet = workbook.create_sheet(title)
-    sheet.append(headers)
+    _append(sheet, headers)
     for cell in sheet[1]:
         cell.fill = _HEADER_FILL
         cell.font = _HEADER_FONT
@@ -66,7 +84,7 @@ def enrich_due_diligence_workbook(
         ("报告终审得分", _value(report_review, "score", 0)),
         ("终审摘要", _value(report_review, "summary", "")),
     ):
-        summary.append([label, value])
+        _append(summary, [label, value])
     _finish_sheet(summary, [24, 90])
 
     evidence_sheet = _prepare_sheet(
@@ -75,7 +93,8 @@ def enrich_due_diligence_workbook(
         ["Evidence ID", "来源类型", "标题", "页码", "URL", "内容", "置信度"],
     )
     for item in evidence:
-        evidence_sheet.append(
+        _append(
+            evidence_sheet,
             [
                 _value(item, "evidence_id", ""),
                 _value(item, "source_type", ""),
@@ -94,7 +113,8 @@ def enrich_due_diligence_workbook(
         ["Finding ID", "Agent", "研究问题", "结论", "Evidence IDs", "证据强度", "风险", "待核事项"],
     )
     for item in findings:
-        finding_sheet.append(
+        _append(
+            finding_sheet,
             [
                 _value(item, "finding_id", ""),
                 _value(item, "agent_name", ""),
@@ -114,7 +134,8 @@ def enrich_due_diligence_workbook(
         ["优先级", "类别", "问题", "原因", "所需材料", "未解决影响", "状态"],
     )
     for item in diligence_questions:
-        question_sheet.append(
+        _append(
+            question_sheet,
             [
                 _value(item, "priority", ""),
                 _value(item, "category", ""),
@@ -133,7 +154,8 @@ def enrich_due_diligence_workbook(
         ["时间", "发送方", "接收方", "类型", "内容", "结构化载荷"],
     )
     for item in agent_messages:
-        trace_sheet.append(
+        _append(
+            trace_sheet,
             [
                 _value(item, "timestamp", ""),
                 _value(item, "sender", ""),
@@ -145,6 +167,13 @@ def enrich_due_diligence_workbook(
         )
     _finish_sheet(trace_sheet, [24, 24, 24, 14, 90, 70])
 
+    # Final boundary guard also covers values loaded from the financial
+    # workbook and future delivery sheets added outside `_append`.
+    for sheet in workbook.worksheets:
+        for row in sheet.iter_rows():
+            for cell in row:
+                if isinstance(cell.value, str):
+                    cell.value = _excel_value(cell.value)
     workbook.save(target)
     return target
 
