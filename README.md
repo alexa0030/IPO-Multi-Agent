@@ -1,6 +1,26 @@
 # IPO Research Agent
 
-面向港股 IPO 招股书的 Evidence-grounded Multi-Agent 尽职调查系统。输入公司名称和招股书 PDF，系统完成文档解析、确定性财务分析、公司与业务研究、行业与竞争验证、法律治理审阅、跨 Agent 复核，并输出可追溯的 Markdown/JSON/Excel 研究材料。
+[![CI](https://github.com/alexa0030/IPO-Multi-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/alexa0030/IPO-Multi-Agent/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/Python-3.10--3.12-3776AB)
+![Stage](https://img.shields.io/badge/stage-v0.9%20Engineering%20MVP-0b5d42)
+
+面向港股 IPO 招股书的 **Evidence-grounded Multi-Agent 尽调平台**。它不是一个“上传 PDF 后聊天”的壳：系统将确定性财务计算、公司/行业/法律研究、证据账本、反证复核与报告终审拆成可审计的工程流水线。
+
+![投委会研究工作台](docs/assets/dashboard.png)
+
+## 60 秒了解项目
+
+| 面试官最关心的问题 | 当前实现 |
+|---|---|
+| 输入什么？ | 公司名称 + 港股招股书 PDF；公开研究可选 |
+| 解决什么？ | 数百页招股书中的财务重建、业务/行业/法律核查与跨结论复核 |
+| 为什么不是普通 RAG？ | 数字由 Python 计算；Finding 必须引用 Evidence；缺证时显式失败而非补写 |
+| 输出什么？ | Markdown 尽调报告、Excel 底稿、Evidence Ledger、Agent Trace、JSON/SQLite |
+| 做到什么程度？ | 504 页真实案例回归；13 张报表、468 条事实、29 项指标、20 条法证规则 |
+| 如何证明质量？ | 135 项自动化测试；4 个版本化评测案例清单，其中 1 个已完成人工 gold labels |
+
+> **立即看界面：** 运行 `run_demo.bat`（Windows）或 `streamlit run app.py`。
+> 演示模式无需 PDF、模型或 API Key；上传招股书后，同一工作台调用完整后端。
 
 > 当前定位：v0.9 Engineering MVP。项目用于研究辅助、工程演示和多 Agent 金融文档分析实验，不构成投资、法律或审计意见。
 
