@@ -1,6 +1,5 @@
 # IPO Research Agent
 
-[![CI](https://github.com/alexa0030/IPO-Multi-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/alexa0030/IPO-Multi-Agent/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.10--3.12-3776AB)
 ![Stage](https://img.shields.io/badge/stage-v0.9%20Engineering%20MVP-0b5d42)
 
