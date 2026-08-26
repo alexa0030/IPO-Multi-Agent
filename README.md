@@ -5,6 +5,8 @@
 
 面向港股 IPO 招股书的 **Evidence-grounded Multi-Agent 尽调平台**。它不是一个“上传 PDF 后聊天”的壳：系统将确定性财务计算、公司/行业/法律研究、证据账本、反证复核与报告终审拆成可审计的工程流水线。
 
+> **开发方式说明：** 本项目采用 AI-assisted / Vibe Coding 工作流，由项目作者负责需求定义、架构取舍、金融规则设计、测试验收与版本迭代，Codex 用于代码生成、重构和文档协作。仓库通过结构化契约、确定性计算、人工 gold labels 与自动化测试约束 AI 生成代码，而非将模型输出直接视为正确实现。
+
 ![投委会研究工作台](docs/assets/dashboard.png)
 
 ## 60 秒了解项目
@@ -17,11 +19,24 @@
 | 输出什么？ | Markdown 尽调报告、Excel 底稿、Evidence Ledger、Agent Trace、JSON/SQLite |
 | 做到什么程度？ | 504 页真实案例回归；13 张报表、468 条事实、29 项指标、20 条法证规则 |
 | 如何证明质量？ | 135 项自动化测试；4 个版本化评测案例清单，其中 1 个已完成人工 gold labels |
+| 如何开发？ | AI-assisted / Vibe Coding；作者主导需求、架构、金融规则与验收，Codex 辅助实现 |
 
 > **立即看界面：** 运行 `run_demo.bat`（Windows）或 `streamlit run app.py`。
 > 演示模式无需 PDF、模型或 API Key；上传招股书后，同一工作台调用完整后端。
 
 > 当前定位：v0.9 Engineering MVP。项目用于研究辅助、工程演示和多 Agent 金融文档分析实验，不构成投资、法律或审计意见。
+
+## 项目完成度
+
+- [x] 招股书页级解析、章节定位与三表抽取
+- [x] 公司、财务、行业、法律四类专业研究分支
+- [x] Evidence / Finding / Challenge 可审计数据契约
+- [x] Risk Reviewer、Skeptic 补证与 Final Reviewer 终审闭环
+- [x] Markdown、Excel、JSON、SQLite 多格式交付
+- [x] 脱敏投委会工作台与无模型演示模式
+- [x] 135 项自动化测试和版本化评测框架
+- [ ] 补齐另外 3 个案例的人工 gold labels
+- [ ] Evidence 点击定位、任务队列与线上受限 Demo
 
 ## 核心原则
 
