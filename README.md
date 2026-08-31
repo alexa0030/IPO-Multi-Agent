@@ -1,13 +1,20 @@
-# IPO Research Agent
+# HK IPO Intelligence Desk
+
+> Evidence-grounded Multi-Agent due diligence for Hong Kong IPO prospectuses
 
 ![Python](https://img.shields.io/badge/Python-3.10--3.12-3776AB)
-![Stage](https://img.shields.io/badge/stage-v0.9%20Engineering%20MVP-0b5d42)
+![Tests](https://img.shields.io/badge/tests-141%20passed-0b5d42)
+![E2E](https://img.shields.io/badge/504--page%20E2E-verified-0b5d42)
+![Model](https://img.shields.io/badge/Qwen3.5--4B-vLLM-6f42c1)
+![Stage](https://img.shields.io/badge/stage-Engineering%20MVP-d97706)
 
 面向港股 IPO 招股书的 **Evidence-grounded Multi-Agent 尽调平台**。它不是一个“上传 PDF 后聊天”的壳：系统将确定性财务计算、公司/行业/法律研究、证据账本、反证复核与报告终审拆成可审计的工程流水线。
 
 > **开发方式说明：** 本项目采用 AI-assisted / Vibe Coding 工作流，由项目作者负责需求定义、架构取舍、金融规则设计、测试验收与版本迭代，Codex 用于代码生成、重构和文档协作。仓库通过结构化契约、确定性计算、人工 gold labels 与自动化测试约束 AI 生成代码，而非将模型输出直接视为正确实现。
 
-> **Reproducibility status（2026-08-27）：** 当前仓库中的 Streamlit 工作台已通过无模型 UI 冒烟测试，但首页演示数据不是本机刚运行完整流水线产生的 benchmark 结果。真实招股书端到端复现、脱敏产物与运行截图正在重新验证；验证完成前不将演示界面作为真实运行证据。
+> **Reproducibility status（2026-08-27）：** 已在 504 页汉森软件申请版本上完成 `llm_mode=off` 与本地 Qwen3.5-4B（vLLM、32K context）两条端到端复现。首页演示标签仍只用于零配置浏览；“查看已完成任务”读取真实 `run_summary.json` 与交付产物。可公开复核的脱敏结果见 [`examples/hosonsoft/`](examples/hosonsoft/)。
+
+**快速入口：** [真实复现结果](#2026-08-27-真实复现结果) · [系统工作流](#工作流) · [本地运行](#运行方式) · [评测方法](#评测) · [简历与面试表述](docs/RESUME.md)
 
 ## 60 秒了解项目
 
@@ -17,8 +24,8 @@
 | 解决什么？ | 数百页招股书中的财务重建、业务/行业/法律核查与跨结论复核 |
 | 为什么不是普通 RAG？ | 数字由 Python 计算；Finding 必须引用 Evidence；缺证时显式失败而非补写 |
 | 输出什么？ | Markdown 尽调报告、Excel 底稿、Evidence Ledger、Agent Trace、JSON/SQLite |
-| 做到什么程度？ | 504 页真实案例回归；13 张报表、468 条事实、29 项指标、20 条法证规则 |
-| 如何证明质量？ | 135 项自动化测试；4 个版本化评测案例清单，其中 1 个已完成人工 gold labels |
+| 做到什么程度？ | 504 页真实案例回归；13 张报表、462 条事实、33 条模型附注、32 项指标、20 条法证规则 |
+| 如何证明质量？ | 141 项自动化测试已验证；汉森 development 单案例 8/8 指标、6/6 风险标签命中，证据页准确率 100% |
 | 如何开发？ | AI-assisted / Vibe Coding；作者主导需求、架构、金融规则与验收，Codex 辅助实现 |
 
 > **立即看界面：** 运行 `run_demo.bat`（Windows）或 `streamlit run app.py`。
@@ -34,7 +41,8 @@
 - [x] Risk Reviewer、Skeptic 补证与 Final Reviewer 终审闭环
 - [x] Markdown、Excel、JSON、SQLite 多格式交付
 - [x] 脱敏投委会工作台与无模型演示模式
-- [x] 135 项自动化测试和版本化评测框架
+- [x] 141 项自动化测试已验证和版本化评测框架
+- [x] 本地 Qwen3.5-4B / vLLM 32K 上下文真实端到端复现
 - [ ] 补齐另外 3 个案例的人工 gold labels
 - [ ] Evidence 点击定位、任务队列与线上受限 Demo
 
@@ -45,6 +53,7 @@
 - **结构化协作**：Agent 之间通过 Pydantic Schema、Research Task、Finding、Evidence、Review Topic 和 Report Material Pack 传递结果。
 - **正负面平衡**：报告同时保留业务事实、优势、风险、混合判断、证据缺口和后续核查问题。
 - **失败可降级**：Manager、搜索、Topic Reviewer 或章节生成失败时，仅降级当前节点，并在产物中保留状态和错误。
+- **上下文预算**：请求前估算中英文混合 token，为输出预留安全窗口；超限时以可拆分异常返回，避免直到服务端才收到 400。
 - **隐私安全**：真实 PDF、API Key、数据库和运行输出不进入 Git；仓库只保留代码、模板和示例配置。
 
 ## 工作流
@@ -222,7 +231,21 @@ python -m compileall -q src main.py app.py
 python -m pytest -q
 ```
 
-当前回归基线为 **135 passed**。测试覆盖文档定位、主体识别、三表与指标、财务规则、Research Ledger、Agent 工具预算与降级、Company/Industry/Legal 阶段、Reviewer + Skeptic 闭环、Evidence 引用、评测框架和 Markdown/Excel 交付。
+当前已验证回归基线为 **141 passed**。测试覆盖文档定位、主体识别、三表与指标、财务规则、Research Ledger、Agent 工具预算、上下文预检与分章节修订、Company/Industry/Legal 阶段、Reviewer + Skeptic 闭环、报告质量修订门、Evidence 引用、评测框架和 Markdown/Excel 交付；“复审不增分则回滚”测试已加入，待下一次服务器回归计入新基线。
+
+## 2026-08-27 真实复现结果
+
+| 项目 | `llm_mode=off` | Qwen3.5-4B / vLLM |
+|---|---:|---:|
+| PDF 页数 | 504 | 504 |
+| 原始财务报表 | 13 | 13 |
+| 财务事实 / 指标 | 462 / 32 | 462 / 32 |
+| 模型附注 | 0 | 33 |
+| 研究证据 / 发现 | 59 / 14 | 85 / 20 |
+| 法证规则触发 | 4 / 20 | 4 / 20 |
+| 人工标签评测 | 8/8 指标，6/6 风险 | 8/8 指标，6/6 风险 |
+
+以上评测仅代表 **Hosonsoft development 单案例**，不代表跨公司泛化准确率。其余 validation/test 案例尚未完成人工标注，仓库不会把候选机器标签包装成测试集成绩。Qwen 报告终审首轮为 80 分并产生 7 条可执行修订意见；一次分章节修订后的复审仍为 80 分，因此候选稿未被视为质量提升。流水线现只在复审分数严格提高时采纳修订，否则保留原稿并记录尝试。
 
 评测脚本：
 

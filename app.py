@@ -10,6 +10,7 @@ if str(SRC) not in sys.path: sys.path.insert(0, str(SRC))
 
 import streamlit as st
 from ipo_financial_agent.config import get_settings
+from ipo_financial_agent.models import PipelineArtifacts
 
 st.set_page_config(page_title="HK IPO Intelligence Desk", page_icon="◈", layout="wide")
 st.markdown("""
@@ -41,6 +42,41 @@ def read_json(path: str|Path|None, fallback: Any)->Any:
     try: return json.loads(candidate.read_text(encoding="utf-8"))
     except (OSError,json.JSONDecodeError): return fallback
 
+def completed_runs()->list[Path]:
+    return sorted(
+        (ROOT/"data"/"extracted").glob("*/run_summary.json"),
+        key=lambda path:path.stat().st_mtime,
+        reverse=True,
+    )
+
+def load_run(path:Path|None)->PipelineArtifacts|None:
+    payload=read_json(path,{}) if path else {}
+    try:
+        artifacts=PipelineArtifacts.model_validate(payload)
+        extracted=ROOT/"data"/"extracted"/artifacts.document_id; output=ROOT/"data"/"output"; delivery=output/artifacts.document_id
+        metadata=dict(artifacts.metadata)
+        local_metadata={
+            "risk_review_json":"risk_review.json",
+            "due_diligence_json":"due_diligence_conclusion.json",
+            "report_review_json":"report_review.json",
+            "forensic_findings_json":"forensic_findings.json",
+        }
+        for key,filename in local_metadata.items():
+            local=extracted/filename
+            if local.is_file(): metadata[key]=str(local)
+        return artifacts.model_copy(update={
+            "metrics_json":str(extracted/"metrics.json"),
+            "final_report_path":str(delivery/"IPO_Due_Diligence_Report.md"),
+            "due_diligence_workbook_path":str(delivery/"IPO_Due_Diligence_Report.xlsx"),
+            "evidence_json":str(delivery/"evidence.json"),
+            "agent_trace_json":str(delivery/"agent_trace.json"),
+            "delivery_manifest_json":str(delivery/"delivery_manifest.json"),
+            "report_path":str(output/f"{artifacts.document_id}_financial_report.md"),
+            "excel_path":str(output/f"{artifacts.document_id}_financial_workbook.xlsx"),
+            "metadata":metadata,
+        })
+    except Exception: return None
+
 def metric_card(label:str,value:str|int,note:str)->None:
     st.markdown(f'<div class="metric-card"><div class="metric-label">{label}</div><div class="metric-value">{value}</div><div class="metric-note">{note}</div></div>',unsafe_allow_html=True)
 
@@ -60,7 +96,13 @@ def run_pipeline(uploaded:Any,company:str,llm_mode:str,search_mode:str,queries:i
 
 with st.sidebar:
     st.markdown("### ◈ IPO Intelligence"); st.caption("Evidence-grounded Research OS"); st.divider()
-    mode=st.radio("工作台",["演示总览","发起真实任务"],label_visibility="collapsed"); st.divider()
+    available_runs=completed_runs(); options=["演示总览","发起真实任务"]
+    if available_runs: options.insert(1,"查看已完成任务")
+    mode=st.radio("工作台",options,label_visibility="collapsed"); selected_run=None; st.divider()
+    if mode=="查看已完成任务":
+        labels={f"{read_json(path,{}).get('company','未知公司')} · {path.parent.name}":path for path in available_runs}
+        selected_run=labels[st.selectbox("真实运行记录",list(labels))]
+        st.success("已加载本机真实流水线产物；页面不会使用演示标签。")
     if mode=="发起真实任务":
         company=st.text_input("发行人名称",placeholder="例如：XX科技集团"); uploaded=st.file_uploader("上传港股招股书",type=["pdf"])
         with st.expander("运行设置"):
@@ -72,9 +114,10 @@ with st.sidebar:
     else: st.info("当前为脱敏演示数据，可直接浏览全部产品能力。")
     st.divider(); st.markdown("<div class='disclaimer'>用于研究辅助与工程演示，不构成投资、审计或法律意见。</div>",unsafe_allow_html=True)
 
-artifacts=st.session_state.get("artifacts") if mode=="发起真实任务" else None; is_demo=artifacts is None; metadata={} if is_demo else artifacts.metadata
+artifacts=(st.session_state.get("artifacts") if mode=="发起真实任务" else load_run(selected_run) if mode=="查看已完成任务" else None); is_demo=artifacts is None; metadata={} if is_demo else artifacts.metadata
 company_name=DEMO["company"] if is_demo else artifacts.company; verdict=DEMO["verdict"] if is_demo else (metadata.get("due_diligence_verdict") or "待人工复核"); score=DEMO["score"] if is_demo else (metadata.get("report_review_score") or "—")
 evidence_count=DEMO["evidence"] if is_demo else metadata.get("research_evidence_count",0); finding_count=DEMO["findings"] if is_demo else metadata.get("research_finding_count",0); risk_count=DEMO["risks"] if is_demo else metadata.get("risk_count",0); page_count=DEMO["pages"] if is_demo else metadata.get("page_count",0)
+risk_review={} if is_demo else read_json(metadata.get("risk_review_json"),{}); due_diligence={} if is_demo else read_json(metadata.get("due_diligence_json"),{})
 st.markdown(f'<div class="hero"><div class="eyebrow">Investment committee workspace · {"demo" if is_demo else "live case"}</div><h1>{company_name} <span style="color:#8b9892;font-weight:400">/ 港股 IPO 尽调</span></h1><p>从招股书解析、财务取证与行业验证，到反方质疑和终审交付；每个结论都可回溯至页码、计算过程或已登记的公开来源。</p><div style="margin-top:.8rem"><span class="status-pill">● 流程已完成</span><span class="status-pill">证据链完整</span></div></div>',unsafe_allow_html=True)
 cols=st.columns(5); cards=[("投委会结论",verdict,"Final Reviewer 已复核"),("报告质量评分",score,"引用 / 完整性 / 边界"),("结构化证据",evidence_count,"均带来源定位"),("研究发现",finding_count,"跨 Agent 合并去重"),("风险信号",risk_count,f"覆盖 {page_count} 页招股书")]
 for col,card in zip(cols,cards):
@@ -84,14 +127,21 @@ overview,evidence_tab,agents_tab,report_tab=st.tabs(["投委会总览","证据�
 with overview:
     left,right=st.columns([1.65,1],gap="large")
     with left:
-        st.subheader("核心判断"); st.markdown('<div class="section-card"><h3 style="margin-top:0">建议有条件推进，重点核查盈利质量与客户依赖</h3><p style="color:#64736d;line-height:1.75;margin-bottom:.4rem">历史财务表现具备一定增长基础，核心业务边界清晰；但现金转化、客户集中和关联交易定价仍是影响上市质量的关键变量。建议在进入下一决策阶段前完成定向补证。</p></div>',unsafe_allow_html=True); st.subheader("重点风险矩阵")
-        for title,desc,level,source in DEMO["risk_items"]:
+        live_summary=due_diligence.get("company_profile") or "真实流水线已完成；请结合证据账本和待核查问题进行人工复核。"
+        live_risks=due_diligence.get("key_risks") or risk_review.get("major_risks") or []
+        st.subheader("核心判断"); st.markdown(f'<div class="section-card"><h3 style="margin-top:0">{verdict}</h3><p style="color:#64736d;line-height:1.75;margin-bottom:.4rem">{live_summary if not is_demo else "历史财务表现具备一定增长基础，核心业务边界清晰；但现金转化、客户集中和关联交易定价仍是影响上市质量的关键变量。建议在进入下一决策阶段前完成定向补证。"}</p></div>',unsafe_allow_html=True); st.subheader("重点风险矩阵")
+        risk_items=DEMO["risk_items"] if is_demo else [(f"风险 {idx}",str(item),"需关注","真实 evidence.json / risk_review.json") for idx,item in enumerate(live_risks[:6],1)]
+        for title,desc,level,source in risk_items:
             badge="risk-high" if level=="高风险" else "risk-mid"; st.markdown(f'<div class="section-card"><div style="display:flex;justify-content:space-between"><strong>{title}</strong><span class="{badge}">{level}</span></div><p style="margin:.45rem 0;color:#46564f">{desc}</p><small style="color:#7c8a84">证据：{source}</small></div>',unsafe_allow_html=True)
     with right:
         st.subheader("研究覆盖")
-        for name,value in [("财务质量",88),("公司与业务",92),("行业与竞争",76),("法律与治理",81),("证据完整性",94)]: st.caption(name); st.progress(value/100,text=f"{value}%")
+        if is_demo:
+            for name,value in [("财务质量",88),("公司与业务",92),("行业与竞争",76),("法律与治理",81),("证据完整性",94)]: st.caption(name); st.progress(value/100,text=f"{value}%")
+        else:
+            for name,value in [("招股书页数",page_count),("候选页",metadata.get("candidate_page_count",0)),("财务事实",metadata.get("fact_count",0)),("财务指标",metadata.get("metric_count",0)),("研究证据",evidence_count)]: st.metric(name,value)
         st.subheader("待投委会追问")
-        for q in ["现金流背离是否由一次性扩张投入造成？","核心客户续约与议价权有何硬证据？","关联采购价格如何证明具备市场公允性？","募投项目的收入增量假设是否过于乐观？"]: st.markdown(f"- {q}")
+        questions=["现金流背离是否由一次性扩张投入造成？","核心客户续约与议价权有何硬证据？","关联采购价格如何证明具备市场公允性？","募投项目的收入增量假设是否过于乐观？"] if is_demo else risk_review.get("investment_questions",[])
+        for q in questions[:8]: st.markdown(f"- {q}")
 with evidence_tab:
     left,right=st.columns([1.35,1],gap="large"); payload=read_json(None if is_demo else artifacts.evidence_json,{}); live=payload.get("evidence",[])[:15]
     with left:
@@ -101,7 +151,7 @@ with evidence_tab:
             for eid,claim,source in DEMO["evidence_items"]: st.markdown(f'<div class="evidence"><strong>{eid} · {claim}</strong><small>{source}</small></div>',unsafe_allow_html=True)
         st.caption("财务数字仅来自已登记表格、指标或计算 Evidence；无法确认的事项显式标记为待核查。")
     with right:
-        st.subheader("取证完整性"); st.metric("Evidence 引用通过率","100%","无悬空 Finding"); st.metric("确定性财务指标","29","代码计算，模型只负责解释"); st.metric("财务风险规则","20+","异常自动触发并保留过程"); st.info("点击式 PDF 页码定位是下一阶段能力；当前交付已保留页码和来源 URL。")
+        st.subheader("取证完整性"); st.metric("证据账本校验","通过" if is_demo or metadata.get("ledger_integrity_passed") else "需复核"); st.metric("确定性财务指标",29 if is_demo else metadata.get("metric_count",0),"代码计算，模型只负责解释"); st.metric("财务取证规则","20+" if is_demo else metadata.get("forensic_finding_count",0),"异常自动触发并保留过程"); st.info("当前交付保留页码和来源 URL；点击式 PDF 页码定位仍在产品路线中。")
 with agents_tab:
     st.subheader("虚拟投研团队"); st.caption("Manager 统筹任务，四类专家并行研究，Skeptic 发起反证挑战，Final Reviewer 执行引用与合规终审。"); c1,c2=st.columns(2,gap="large")
     for idx,agent in enumerate(AGENT_TEAM):

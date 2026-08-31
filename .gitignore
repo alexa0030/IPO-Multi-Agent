@@ -6,6 +6,7 @@ __pycache__/
 .pytest_cache/
 .pytest_tmp*/
 .ruff_cache/
+.cache/
 *.log
 work/
 evaluation/predictions/

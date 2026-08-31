@@ -969,7 +969,9 @@ class IPOFinancialPipeline:
         instructions = list(
             getattr(review, "revision_instructions", []) or []
         )
-        if not instructions or getattr(review, "passed", False):
+        # Passing the hard gate can still leave actionable quality findings.
+        # Apply one bounded revision until the investor-facing target is met.
+        if not instructions or getattr(review, "score", 0) >= 90:
             return {"report_revision_performed": False}
         client = None
         if self._should_use_llm(state["llm_mode"]):
@@ -987,13 +989,31 @@ class IPOFinancialPipeline:
                 flush=True,
             )
             return {"report_revision_performed": False}
-        post_review = EvidenceComplianceReviewerAgent().review(
+        post_review = EvidenceComplianceReviewerAgent(client).review(
             company=state["company"], report=revised
         )
+        if post_review.score <= getattr(review, "score", 0):
+            return {
+                "report_revision_performed": False,
+                "report_revision_attempted": True,
+                "agent_messages": [
+                    AgentMessage(
+                        sender="EvidenceComplianceReviewer",
+                        receiver="ReportWriter",
+                        content="Revision candidate was rejected because the review score did not improve.",
+                        message_type="decision",
+                        payload={
+                            "before_score": getattr(review, "score", 0),
+                            "candidate_score": post_review.score,
+                        },
+                    )
+                ],
+            }
         return {
             "final_report": revised,
             "report_review": post_review,
             "report_revision_performed": True,
+            "report_revision_attempted": True,
             "agent_messages": [
                 AgentMessage(
                     sender="ReportWriter",
@@ -1287,6 +1307,9 @@ class IPOFinancialPipeline:
                 ),
                 "report_revision_performed": state.get(
                     "report_revision_performed", False
+                ),
+                "report_revision_attempted": state.get(
+                    "report_revision_attempted", False
                 ),
                 "legacy_final_report_path": str(final_report_path)
                 if final_report_path

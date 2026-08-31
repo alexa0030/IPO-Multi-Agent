@@ -1,0 +1,21 @@
+{
+  "run_date": "2026-08-27",
+  "company": "深圳市汉森软件股份有限公司",
+  "page_count": 504,
+  "candidate_page_count": 19,
+  "raw_statement_count": 13,
+  "fact_count": 462,
+  "note_count": 33,
+  "metric_count": 32,
+  "forensic_rule_count": 20,
+  "forensic_triggered_count": 4,
+  "research_evidence_count": 85,
+  "research_finding_count": 20,
+  "llm_mode": "on",
+  "model": "Qwen3.5-4B",
+  "serving": "vLLM OpenAI-compatible API",
+  "context_window_tokens": 32768,
+  "ledger_integrity_passed": true,
+  "report_review_score_first_pass": 80,
+  "due_diligence_verdict": "conditional_proceed"
+}

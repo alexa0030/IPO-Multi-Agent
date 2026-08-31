@@ -1,0 +1,14 @@
+{
+  "verified_metric_count": 8,
+  "metric_matches": 8,
+  "metric_accuracy": 1.0,
+  "verified_finding_count": 6,
+  "finding_matches": 6,
+  "finding_partial_matches": 0,
+  "finding_recall": 1.0,
+  "finding_weighted_score": 1.0,
+  "evidence_page_accuracy": 1.0,
+  "unsupported_finding_rate": 0.0,
+  "split": "development",
+  "scope_warning": "Single human-verified development case; not cross-company accuracy."
+}

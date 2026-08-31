@@ -7,6 +7,7 @@ citations and cross-agent findings.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from ipo_financial_agent.llm.client import OpenAICompatibleClient
@@ -82,21 +83,58 @@ Agent 执行摘要：
         """Apply one bounded reviewer round while preserving citations."""
         if self.client is None or not revision_instructions:
             return report
-        prompt = f"""根据终审意见修订港股 IPO 公司尽调报告。
-只能调整现有报告，不得新增事实；必须保留原有 Evidence ID、页码和 URL。
-不得给出投资金额、估值上限、退出期限或目标收益率。
+        matches = list(re.finditer(r"^##\s+.+$", report, re.MULTILINE))
+        if not matches:
+            return report
+        chunks = [report[: matches[0].start()]]
+        keyword_aliases = {
+            "投资摘要": ("投资摘要", "核心优势"),
+            "财务分析": ("财务分析", "收现比", "销售费用率", "其他应付款"),
+            "风险分析": ("风险分析", "风险项", "待解释观察"),
+            "综合判断": ("综合判断",),
+            "补充尽调": ("补充尽调", "诉讼", "处罚"),
+            "财务报表附录": ("财务报表附录", "银行借款", "认沽期权"),
+        }
+        for index, match in enumerate(matches):
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(report)
+            section = report[match.start() : end]
+            title = match.group(0)
+            aliases = next(
+                (values for key, values in keyword_aliases.items() if key in title),
+                (),
+            )
+            instructions = [
+                item for item in revision_instructions
+                if aliases and any(alias in item for alias in aliases)
+            ]
+            # Long deterministic appendices are not safe for prose rewriting.
+            if not instructions or len(section) > 16000:
+                chunks.append(section)
+                continue
+            prompt = f"""根据终审意见只修订下方一个 Markdown 章节。
+不得新增事实；必须保留该章节已有 Evidence ID、页码、URL、标题和表格。
+无法用已有内容完成的意见，应改写为明确的待核查事项，不得猜测补齐。
 
 终审意见：
-{json.dumps(revision_instructions, ensure_ascii=False)}
+{json.dumps(instructions, ensure_ascii=False)}
 
-原报告：
-{report[:50000]}
+待修订章节：
+{section}
 """
-        revised = self.client.complete_text(
-            system_prompt="你是尽调报告修订编辑，只执行终审意见，不新增研究结论。",
-            user_prompt=prompt,
-            max_tokens=7000,
-        )
+            try:
+                candidate = self.client.complete_text(
+                    system_prompt="你是尽调报告章节修订编辑，只执行终审意见，不新增研究结论。",
+                    user_prompt=prompt,
+                    max_tokens=4000,
+                )
+            except Exception:
+                chunks.append(section)
+                continue
+            if title not in candidate or candidate.count("|") < section.count("|"):
+                chunks.append(section)
+            else:
+                chunks.append(candidate.rstrip() + "\n\n")
+        revised = "".join(chunks).rstrip() + "\n"
         protected = ("资产负债表", "利润表", "现金流量表")
         if any(token in report and token not in revised for token in protected):
             return report

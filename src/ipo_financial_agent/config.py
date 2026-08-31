@@ -25,6 +25,8 @@ class Settings:
     llm_temperature: float
     llm_timeout_seconds: float
     llm_max_retries: int
+    llm_context_window_tokens: int
+    llm_context_safety_tokens: int
 
     parse_chunk_max_chars: int
     parse_chunk_overlap_pages: int
@@ -64,6 +66,12 @@ def get_settings(project_root: str | Path | None = None) -> Settings:
         llm_temperature=float(os.getenv("LLM_TEMPERATURE", "0.1")),
         llm_timeout_seconds=float(os.getenv("LLM_TIMEOUT_SECONDS", "120")),
         llm_max_retries=int(os.getenv("LLM_MAX_RETRIES", "3")),
+        llm_context_window_tokens=int(
+            os.getenv("LLM_CONTEXT_WINDOW_TOKENS", "32768")
+        ),
+        llm_context_safety_tokens=int(
+            os.getenv("LLM_CONTEXT_SAFETY_TOKENS", "512")
+        ),
         parse_chunk_max_chars=int(os.getenv("PARSE_CHUNK_MAX_CHARS", "45000")),
         parse_chunk_overlap_pages=int(os.getenv("PARSE_CHUNK_OVERLAP_PAGES", "1")),
         candidate_context_pages=int(os.getenv("CANDIDATE_CONTEXT_PAGES", "1")),
