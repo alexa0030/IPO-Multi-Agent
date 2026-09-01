@@ -4,7 +4,7 @@
 
 ### 港股 IPO 投研 Multi-Agent 系统（Vibe Coding）｜独立开发
 
-- **项目介绍：** 面向一级市场 IPO 投研场景，独立设计并开发港股招股书自动化尽调系统，实现 PDF 解析、财务取证、公司/行业/法律研究、风险复核及投委会报告生成的完整流程。
+- **项目介绍：** 面向一级市场 IPO 投研场景，独立设计并开发港股招股书自动化尽调系统，实现 PDF 解析、财务取证、公司/行业/法律研究、风险复核及投委会报告生成的完整流程；**项目链接：** [GitHub｜代码、架构说明与脱敏复现结果](https://github.com/alexa0030/IPO-Multi-Agent)。
 - **技术栈：** Python、LangGraph、Pydantic、PyMuPDF、pdfplumber、OpenPyXL、SQLite、Streamlit、Qwen3.5-4B、vLLM、Pytest。
 - **个人工作：** 1）基于 LangGraph 编排 Research Manager、公司/财务/行业/法律 4 类 Expert Agents 及 Reviewer/Skeptic，通过 Evidence/Finding 契约实现结论到 PDF 页码与计算依据的追溯；2）在 **504 页**真实申请版本上重建 **13 张财务报表**、提取 **462 条财务事实**并计算 **32 项指标**，执行 **20 条财务法证规则**；3）建立 4 公司评测框架并验证 **141 项自动化测试**，人工核验案例实现 **8/8 核心指标、6/6 风险标签命中及 100% 证据页准确率**；4）完成离线与本地 Qwen3.5-4B 双链路运行，交付 Streamlit 工作台、Markdown、Excel、Evidence Ledger 与 Agent Trace；5）项目采用 Vibe Coding，由 Codex 辅助实现，本人负责需求、架构、金融规则、测试标准及结果验收。
 
