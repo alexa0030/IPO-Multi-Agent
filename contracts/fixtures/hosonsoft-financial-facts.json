@@ -1,0 +1,27 @@
+{
+  "company": "深圳市汉森软件股份有限公司",
+  "documentId": "hkipo_hosonsoft_20260514",
+  "reportingEntity": "深圳市汉森软件股份有限公司",
+  "facts": [
+    {"factId":"revenue-2023","metricCode":"revenue","period":"2023","value":332062,"unit":"CNY thousand","page":21,"reportingEntity":"深圳市汉森软件股份有限公司"},
+    {"factId":"revenue-2024","metricCode":"revenue","period":"2024","value":438957,"unit":"CNY thousand","page":21,"reportingEntity":"深圳市汉森软件股份有限公司"},
+    {"factId":"revenue-2025","metricCode":"revenue","period":"2025","value":596909,"unit":"CNY thousand","page":21,"reportingEntity":"深圳市汉森软件股份有限公司"},
+    {"factId":"gross-profit-2023","metricCode":"gross_profit","period":"2023","value":188820,"unit":"CNY thousand","page":21,"reportingEntity":"深圳市汉森软件股份有限公司"},
+    {"factId":"gross-profit-2024","metricCode":"gross_profit","period":"2024","value":243881,"unit":"CNY thousand","page":21,"reportingEntity":"深圳市汉森软件股份有限公司"},
+    {"factId":"gross-profit-2025","metricCode":"gross_profit","period":"2025","value":325279,"unit":"CNY thousand","page":21,"reportingEntity":"深圳市汉森软件股份有限公司"},
+    {"factId":"net-profit-2023","metricCode":"net_profit","period":"2023","value":112697,"unit":"CNY thousand","page":21,"reportingEntity":"深圳市汉森软件股份有限公司"},
+    {"factId":"net-profit-2024","metricCode":"net_profit","period":"2024","value":139813,"unit":"CNY thousand","page":21,"reportingEntity":"深圳市汉森软件股份有限公司"},
+    {"factId":"net-profit-2025","metricCode":"net_profit","period":"2025","value":142277,"unit":"CNY thousand","page":21,"reportingEntity":"深圳市汉森软件股份有限公司"},
+    {"factId":"ocf-2023","metricCode":"operating_cash_flow","period":"2023","value":143621,"unit":"CNY thousand","page":23,"reportingEntity":"深圳市汉森软件股份有限公司"},
+    {"factId":"ocf-2024","metricCode":"operating_cash_flow","period":"2024","value":140372,"unit":"CNY thousand","page":23,"reportingEntity":"深圳市汉森软件股份有限公司"},
+    {"factId":"ocf-2025","metricCode":"operating_cash_flow","period":"2025","value":84389,"unit":"CNY thousand","page":23,"reportingEntity":"深圳市汉森软件股份有限公司"},
+    {"factId":"current-assets-2025","metricCode":"current_assets","period":"2025","value":976478,"unit":"CNY thousand","page":22,"reportingEntity":"深圳市汉森软件股份有限公司"},
+    {"factId":"current-liabilities-2025","metricCode":"current_liabilities","period":"2025","value":263595,"unit":"CNY thousand","page":22,"reportingEntity":"深圳市汉森软件股份有限公司"},
+    {"factId":"inventory-2023","metricCode":"inventory","period":"2023","value":33976,"unit":"CNY thousand","page":282,"reportingEntity":"深圳市汉森软件股份有限公司"},
+    {"factId":"inventory-2024","metricCode":"inventory","period":"2024","value":42095,"unit":"CNY thousand","page":282,"reportingEntity":"深圳市汉森软件股份有限公司"},
+    {"factId":"inventory-2025","metricCode":"inventory","period":"2025","value":137510,"unit":"CNY thousand","page":282,"reportingEntity":"深圳市汉森软件股份有限公司"},
+    {"factId":"receivable-2023","metricCode":"trade_receivable","period":"2023","value":36115,"unit":"CNY thousand","page":282,"reportingEntity":"深圳市汉森软件股份有限公司"},
+    {"factId":"receivable-2024","metricCode":"trade_receivable","period":"2024","value":48115,"unit":"CNY thousand","page":282,"reportingEntity":"深圳市汉森软件股份有限公司"},
+    {"factId":"receivable-2025","metricCode":"trade_receivable","period":"2025","value":132930,"unit":"CNY thousand","page":282,"reportingEntity":"深圳市汉森软件股份有限公司"}
+  ]
+}

@@ -14,6 +14,7 @@ evaluation/predictions/
 *.before_*
 *.safetensors
 model/
+java-platform/target/
 data/uploads/*
 data/extracted/*
 data/output/*

@@ -1,0 +1,13 @@
+spring:
+  application:
+    name: hk-ipo-intelligence-platform
+
+ipo:
+  parser:
+    base-url: ${IPO_PARSER_BASE_URL:http://localhost:8090}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

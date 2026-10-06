@@ -12,6 +12,8 @@
 
 它的核心目标不是让模型“读完后给一个答案”，而是把 IPO 研究拆成一条可审计的生产流程：**数字交给确定性程序，判断交给专业 Agent，结论必须回到证据。**
 
+> **Java V2（建设中）**：仓库新增 [`java-platform/`](java-platform/) 作为 Spring Boot 控制面与服务层，逐步承担任务 API、确定性指标/风险规则、执行轨迹和后续 Agent 编排。Python 主线继续承担成熟的 PDF 解析和研究能力，两端通过 [`contracts/`](contracts/) 的共享契约与回归样例保持口径一致，而不是推倒重写。
+
 [产品能力](#产品能力) · [工作流程](#工作流程) · [真实案例](#真实案例) · [快速开始](#快速开始) · [交付产物](#交付产物) · [系统设计](#系统设计)
 
 ## 从招股书到投委会材料
@@ -163,7 +165,11 @@ data/output/<job_id>/
 
 ## 系统设计
 
+Java V2 的职责边界、演进顺序和参考架构见 [`docs/java-v2-architecture.md`](docs/java-v2-architecture.md)。当前已完成结构化事实 → Java 指标引擎 → 风险观察 → Job API 的 V0.1 纵向切片，并配置 Python/Java 共享 Hosonsoft fixture 与 GitHub Actions 编译测试。
+
 ```text
+contracts/                       # Python/Java 共享 Schema 与核实案例
+java-platform/                   # Spring Boot API、规则引擎和工作流
 src/ipo_financial_agent/
 ├── agents/       # Financial / Company / Industry / Legal Agents
 ├── document/     # PDF 页面、章节与主题定位

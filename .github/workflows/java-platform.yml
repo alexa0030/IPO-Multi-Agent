@@ -1,0 +1,26 @@
+name: Java platform
+
+on:
+  push:
+    paths:
+      - "java-platform/**"
+      - "contracts/**"
+      - ".github/workflows/java-platform.yml"
+  pull_request:
+    paths:
+      - "java-platform/**"
+      - "contracts/**"
+      - ".github/workflows/java-platform.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      - name: Compile and test Java platform
+        run: mvn --batch-mode --file java-platform/pom.xml test
