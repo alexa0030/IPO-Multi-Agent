@@ -134,6 +134,15 @@ OPENAI_COMPATIBLE_BASE_URL=http://127.0.0.1:8000/v1
 OPENAI_COMPATIBLE_MODEL=qwen-local
 ```
 
+Java Planner 接入同一 OpenAI-compatible 服务时，再设置：
+
+```bash
+IPO_CHAT_MODEL=openai
+IPO_LLM_PLANNER_ENABLED=true
+```
+
+默认两个开关均不启用，确定性财务计算、风险规则和离线测试不会调用大模型。
+
 ```bash
 python main.py --pdf "data/uploads/prospectus.pdf" --company "示例公司" --llm-mode auto
 ```

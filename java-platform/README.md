@@ -46,11 +46,21 @@ uvicorn ipo_financial_agent.interop.parser_api:app --host 0.0.0.0 --port 8090
 Parser只输出 `verified_fact_manifest.json` 明确列出的事实；没有人工/规则核实清单时返回错误，
 不会在重复的发行人、母公司、子公司或现金流调整项目之间自行猜测。
 
-模型Planner默认关闭。提供兼容的 Spring AI `ChatModel` Bean 后，可启用：
+模型Planner默认关闭。项目已内置 OpenAI-compatible `ChatModel` 自动配置，可连接
+vLLM、Xinference、兼容网关或其他提供 `/v1/chat/completions` 的 Qwen 服务：
 
 ```bash
+IPO_CHAT_MODEL=openai
 IPO_LLM_PLANNER_ENABLED=true
+IPO_LLM_BASE_URL=http://127.0.0.1:8000
+OPENAI_COMPATIBLE_API_KEY=localtestkey
+OPENAI_COMPATIBLE_MODEL=qwen3.5-4b
 ```
+
+`IPO_LLM_BASE_URL` 填服务根地址，不追加 `/v1`；Python 侧仍使用带 `/v1` 的
+`OPENAI_COMPATIBLE_BASE_URL`，避免 Spring AI 重复拼接路径。
+两个开关必须同时启用：前者创建 `ChatModel`，后者才允许 Planner 调用模型。默认均关闭，
+因此本地测试和规则分析不依赖模型服务，也不会产生意外调用。
 
 模型只能从Reviewer生成的候选Challenge中选择最多3项补证任务；不能新增财务数字、
 不能绕过确定性指标与风险规则。调用或JSON解析失败时自动回退固定Planner。

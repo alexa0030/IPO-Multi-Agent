@@ -1,6 +1,20 @@
 spring:
   application:
     name: hk-ipo-intelligence-platform
+  ai:
+    # Keep model auto-configuration off unless a deployment explicitly opts in.
+    model:
+      chat: ${IPO_CHAT_MODEL:none}
+      embedding: none
+    openai:
+      base-url: ${IPO_LLM_BASE_URL:http://127.0.0.1:8000}
+      api-key: ${OPENAI_COMPATIBLE_API_KEY:localtestkey}
+      timeout: ${IPO_LLM_TIMEOUT:300s}
+      max-retries: ${LLM_MAX_RETRIES:2}
+      chat:
+        options:
+          model: ${OPENAI_COMPATIBLE_MODEL:qwen3.5-4b}
+          temperature: ${LLM_TEMPERATURE:0.3}
 
 ipo:
   agent:
