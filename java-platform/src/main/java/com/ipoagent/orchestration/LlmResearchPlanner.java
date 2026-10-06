@@ -7,7 +7,6 @@ import com.ipoagent.domain.ResearchChallenge;
 import com.ipoagent.domain.ResearchTask;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
@@ -17,7 +16,6 @@ import java.util.Map;
 
 @Component
 @Primary
-@ConditionalOnBean(ChatModel.class)
 @ConditionalOnProperty(name = "ipo.agent.llm-planner-enabled", havingValue = "true")
 public class LlmResearchPlanner implements ResearchPlanner {
     private final IpoResearchPlanner fallback;
