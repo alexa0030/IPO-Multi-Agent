@@ -33,8 +33,9 @@ existing Evidence/Finding contracts and IPO due-diligence constraints.
 2. A rule hit is an `observation`, not a final risk conclusion.
 3. Every metric retains source fact IDs and pages.
 4. Parser responses must match the requested `documentId` and contain verified facts.
-5. Python and Java consume the same fixtures and must stay within declared numeric tolerance.
-6. Agent repair is bounded; failure remains visible in job status and trace.
+5. Parser exports only fact IDs approved by a document-level `verified_fact_manifest.json`.
+6. Python and Java consume the same fixtures and must stay within declared numeric tolerance.
+7. Agent repair is bounded; failure remains visible in job status and trace.
 
 ## Delivery sequence
 

@@ -32,6 +32,16 @@ mvn test
 mvn spring-boot:run
 ```
 
+Python Parser 服务使用独立可选依赖启动：
+
+```bash
+pip install -e ".[api]"
+uvicorn ipo_financial_agent.interop.parser_api:app --host 0.0.0.0 --port 8090
+```
+
+Parser只输出 `verified_fact_manifest.json` 明确列出的事实；没有人工/规则核实清单时返回错误，
+不会在重复的发行人、母公司、子公司或现金流调整项目之间自行猜测。
+
 ## 演进路线
 
 1. ✅ 引入共享 JSON Schema 与 Python/Java parity tests。
