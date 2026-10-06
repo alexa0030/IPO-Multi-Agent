@@ -8,6 +8,8 @@ import com.ipoagent.domain.ParserAnalysisRequest;
 import com.ipoagent.risk.MetricEngine;
 import com.ipoagent.risk.RiskRuleEngine;
 import com.ipoagent.workflow.DeterministicResearchWorkflow;
+import com.ipoagent.orchestration.InvestmentReviewGate;
+import com.ipoagent.orchestration.IpoResearchPlanner;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -25,14 +27,19 @@ class AnalysisJobServiceTest {
                         fact("cash", "operating_cash_flow", 40d)
                 ));
         AnalysisJobService service = new AnalysisJobService(
-                new DeterministicResearchWorkflow(new MetricEngine(), new RiskRuleEngine()), parser);
+                new DeterministicResearchWorkflow(new MetricEngine(), new RiskRuleEngine(),
+                        new IpoResearchPlanner(), new InvestmentReviewGate()), parser);
 
         AnalysisJob job = service.createFromParser(parserRequest);
 
         assertThat(job.status()).isEqualTo(AnalysisJob.JobStatus.COMPLETED);
         assertThat(job.findings()).extracting("ruleCode").contains("weak_cash_conversion");
         assertThat(job.trace()).extracting("stage")
-                .containsExactly("intake", "financial-metric-tool", "risk-rule-tool", "review-gate");
+                .containsExactly("intake", "planner", "financial-metric-tool", "risk-rule-tool",
+                        "review-gate", "bounded-replan");
+        assertThat(job.replanRounds()).isEqualTo(1);
+        assertThat(job.tasks()).extracting("status")
+                .contains(com.ipoagent.domain.ResearchTask.TaskStatus.UNABLE_TO_VERIFY);
     }
 
     private FinancialFact fact(String id, String code, double value) {

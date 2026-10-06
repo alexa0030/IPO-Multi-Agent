@@ -10,6 +10,9 @@ public record AnalysisJob(
         JobStatus status,
         List<MetricResult> metrics,
         List<RiskFinding> findings,
+        List<ResearchTask> tasks,
+        List<ResearchChallenge> challenges,
+        int replanRounds,
         List<AgentTrace> trace,
         Instant createdAt,
         Instant completedAt,
@@ -19,18 +22,21 @@ public record AnalysisJob(
 
     public static AnalysisJob running(String id, AnalysisRequest request) {
         return new AnalysisJob(id, request.company(), request.documentId(), JobStatus.RUNNING,
-                List.of(), List.of(), List.of(), Instant.now(), null, null);
+                List.of(), List.of(), List.of(), List.of(), 0, List.of(), Instant.now(), null, null);
     }
 
     public AnalysisJob completed(List<MetricResult> newMetrics, List<RiskFinding> newFindings,
-                                 List<AgentTrace> newTrace) {
+                                 List<ResearchTask> newTasks, List<ResearchChallenge> newChallenges,
+                                 int newReplanRounds, List<AgentTrace> newTrace) {
         return new AnalysisJob(jobId, company, documentId, JobStatus.COMPLETED,
-                List.copyOf(newMetrics), List.copyOf(newFindings), List.copyOf(newTrace),
+                List.copyOf(newMetrics), List.copyOf(newFindings), List.copyOf(newTasks),
+                List.copyOf(newChallenges), newReplanRounds, List.copyOf(newTrace),
                 createdAt, Instant.now(), null);
     }
 
     public AnalysisJob failed(String message, List<AgentTrace> newTrace) {
         return new AnalysisJob(jobId, company, documentId, JobStatus.FAILED,
-                metrics, findings, List.copyOf(newTrace), createdAt, Instant.now(), message);
+                metrics, findings, tasks, challenges, replanRounds, List.copyOf(newTrace),
+                createdAt, Instant.now(), message);
     }
 }

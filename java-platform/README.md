@@ -22,6 +22,9 @@ Structured Financial Facts
 - 规则命中保持为 `observation`，不直接冒充投资结论。
 - `JUnit 5 + MockMvc` 覆盖领域计算、风险规则及 REST 链路。
 - GitHub Actions 使用 Temurin JDK 17 自动编译并运行 Java 测试。
+- `ResearchTask` 显式记录依赖、状态、attempt 与 parent challenge，形成可审计任务 DAG。
+- `InvestmentReviewGate` 将中高等级规则观察转成正式 Challenge，并限制最多一次 Replan。
+- 补证能力未连接时使用 `UNABLE_TO_VERIFY`，不让模型或工作流自动补写结论。
 
 ## 运行
 
@@ -47,7 +50,7 @@ Parser只输出 `verified_fact_manifest.json` 明确列出的事实；没有人�
 1. ✅ 引入共享 JSON Schema 与 Python/Java parity tests。
 2. 将内存任务存储替换为 MySQL，并增加异步队列、重试和幂等。
 3. ✅ 定义 `ProspectusParserClient` HTTP 边界、响应校验与失败映射；待接通 Python 服务。
-4. 接入 Spring AI Alibaba，将显式工作流扩展为 Planner、并行 Executor、Reviewer 和一次受限 Replan。
+4. 🚧 已完成框架无关的 Planner、任务 DAG、Reviewer Challenge 与一次受限 Replan；下一步接入 Spring AI Alibaba 运行时。
 5. 增加 Web Console、SSE 执行进度、Docker Compose 与 CI。
 
 ## 参考而非复制

@@ -42,6 +42,7 @@ existing Evidence/Finding contracts and IPO due-diligence constraints.
 1. Deterministic vertical slice and REST job API.
 2. Shared contract and Python/Java parity tests.
 3. Python parser service integration.
-4. Persistent asynchronous jobs and idempotency.
-5. Spring AI Alibaba planner/executors/reviewer.
-6. Web console, SSE trace, Docker Compose and cloud deployment.
+4. Framework-independent task DAG, reviewer challenge and bounded replan.
+5. Persistent asynchronous jobs and idempotency.
+6. Spring AI Alibaba runtime adapter for planner/executors/reviewer.
+7. Web console, SSE trace, Docker Compose and cloud deployment.

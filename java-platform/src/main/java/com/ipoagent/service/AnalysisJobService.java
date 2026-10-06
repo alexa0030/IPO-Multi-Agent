@@ -33,7 +33,8 @@ public class AnalysisJobService {
         jobs.put(id, running);
         try {
             IpoResearchWorkflow.WorkflowResult result = workflow.execute(request);
-            AnalysisJob completed = running.completed(result.metrics(), result.findings(), result.trace());
+            AnalysisJob completed = running.completed(result.metrics(), result.findings(), result.tasks(),
+                    result.challenges(), result.replanRounds(), result.trace());
             jobs.put(id, completed);
             return completed;
         } catch (RuntimeException exception) {
