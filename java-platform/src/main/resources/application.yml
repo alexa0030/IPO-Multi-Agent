@@ -3,6 +3,8 @@ spring:
     name: hk-ipo-intelligence-platform
 
 ipo:
+  agent:
+    llm-planner-enabled: ${IPO_LLM_PLANNER_ENABLED:false}
   parser:
     base-url: ${IPO_PARSER_BASE_URL:http://localhost:8090}
 

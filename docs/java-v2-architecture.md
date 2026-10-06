@@ -36,6 +36,7 @@ existing Evidence/Finding contracts and IPO due-diligence constraints.
 5. Parser exports only fact IDs approved by a document-level `verified_fact_manifest.json`.
 6. Python and Java consume the same fixtures and must stay within declared numeric tolerance.
 7. Agent repair is bounded; failure remains visible in job status and trace.
+8. LLM planning may only select from validated challenges and always has a deterministic fallback.
 
 ## Delivery sequence
 

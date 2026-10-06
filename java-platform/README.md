@@ -25,6 +25,7 @@ Structured Financial Facts
 - `ResearchTask` 显式记录依赖、状态、attempt 与 parent challenge，形成可审计任务 DAG。
 - `InvestmentReviewGate` 将中高等级规则观察转成正式 Challenge，并限制最多一次 Replan。
 - 补证能力未连接时使用 `UNABLE_TO_VERIFY`，不让模型或工作流自动补写结论。
+- 接入 Spring AI Alibaba `1.1.2.2`；模型Planner通过配置开关启用，异常或非法JSON自动回退确定性Planner。
 
 ## 运行
 
@@ -45,12 +46,21 @@ uvicorn ipo_financial_agent.interop.parser_api:app --host 0.0.0.0 --port 8090
 Parser只输出 `verified_fact_manifest.json` 明确列出的事实；没有人工/规则核实清单时返回错误，
 不会在重复的发行人、母公司、子公司或现金流调整项目之间自行猜测。
 
+模型Planner默认关闭。提供兼容的 Spring AI `ChatModel` Bean 后，可启用：
+
+```bash
+IPO_LLM_PLANNER_ENABLED=true
+```
+
+模型只能从Reviewer生成的候选Challenge中选择最多3项补证任务；不能新增财务数字、
+不能绕过确定性指标与风险规则。调用或JSON解析失败时自动回退固定Planner。
+
 ## 演进路线
 
 1. ✅ 引入共享 JSON Schema 与 Python/Java parity tests。
 2. 将内存任务存储替换为 MySQL，并增加异步队列、重试和幂等。
 3. ✅ 定义 `ProspectusParserClient` HTTP 边界、响应校验与失败映射；待接通 Python 服务。
-4. 🚧 已完成框架无关的 Planner、任务 DAG、Reviewer Challenge 与一次受限 Replan；下一步接入 Spring AI Alibaba 运行时。
+4. ✅ 已完成框架无关的 Planner、任务 DAG、Reviewer Challenge 与一次受限 Replan，并接入可关闭的 Spring AI Alibaba 模型Planner适配器。
 5. 增加 Web Console、SSE 执行进度、Docker Compose 与 CI。
 
 ## 参考而非复制

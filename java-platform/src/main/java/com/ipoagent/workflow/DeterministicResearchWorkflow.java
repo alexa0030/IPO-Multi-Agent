@@ -7,7 +7,7 @@ import com.ipoagent.domain.RiskFinding;
 import com.ipoagent.domain.ResearchChallenge;
 import com.ipoagent.domain.ResearchTask;
 import com.ipoagent.orchestration.InvestmentReviewGate;
-import com.ipoagent.orchestration.IpoResearchPlanner;
+import com.ipoagent.orchestration.ResearchPlanner;
 import com.ipoagent.risk.MetricEngine;
 import com.ipoagent.risk.RiskRuleEngine;
 import org.springframework.stereotype.Component;
@@ -19,12 +19,12 @@ import java.util.List;
 public class DeterministicResearchWorkflow implements IpoResearchWorkflow {
     private final MetricEngine metricEngine;
     private final RiskRuleEngine riskRuleEngine;
-    private final IpoResearchPlanner planner;
+    private final ResearchPlanner planner;
     private final InvestmentReviewGate reviewGate;
     private final int maxReplanRounds;
 
     public DeterministicResearchWorkflow(MetricEngine metricEngine, RiskRuleEngine riskRuleEngine,
-                                         IpoResearchPlanner planner, InvestmentReviewGate reviewGate) {
+                                         ResearchPlanner planner, InvestmentReviewGate reviewGate) {
         this.metricEngine = metricEngine;
         this.riskRuleEngine = riskRuleEngine;
         this.planner = planner;

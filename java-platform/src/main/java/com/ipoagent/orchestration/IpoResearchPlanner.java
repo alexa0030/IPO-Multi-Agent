@@ -9,8 +9,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Component
-public class IpoResearchPlanner {
+public class IpoResearchPlanner implements ResearchPlanner {
 
+    @Override
     public List<ResearchTask> initialPlan(AnalysisRequest request) {
         String prefix = request.documentId();
         ResearchTask metrics = ResearchTask.pending(prefix + ":metrics",
@@ -20,6 +21,7 @@ public class IpoResearchPlanner {
         return List.of(metrics, risks);
     }
 
+    @Override
     public List<ResearchTask> replan(List<ResearchChallenge> challenges, int round) {
         List<ResearchTask> tasks = new ArrayList<>();
         for (ResearchChallenge challenge : challenges) {
