@@ -51,9 +51,11 @@ class LlmResearchPlannerIntegrationTest {
                 challenge("inventory_vs_revenue")
         );
 
-        List<ResearchTask> tasks = planner.replan(challenges, 1);
+        ReplanResult result = planner.replan(challenges, 1);
+        List<ResearchTask> tasks = result.tasks();
 
         assertThat(planner).isInstanceOf(LlmResearchPlanner.class);
+        assertThat(result.plannerMode()).isEqualTo("llm");
         assertThat(REQUEST_PATH.get()).isEqualTo("/v1/chat/completions");
         assertThat(tasks).hasSize(1);
         assertThat(tasks.get(0).parentTaskId()).isEqualTo("challenge:inventory_vs_revenue");

@@ -30,8 +30,10 @@ class IpoResearchPlannerTest {
         ResearchChallenge challenge = new ResearchChallenge("c1", "weak_cash_conversion",
                 "why", List.of("cash bridge"), "open");
 
-        List<ResearchTask> tasks = planner.replan(List.of(challenge), 1);
+        ReplanResult result = planner.replan(List.of(challenge), 1);
+        List<ResearchTask> tasks = result.tasks();
 
+        assertThat(result.plannerMode()).isEqualTo("deterministic");
         assertThat(tasks).singleElement().satisfies(task -> {
             assertThat(task.taskType()).isEqualTo(ResearchTask.TaskType.FOLLOW_UP_EVIDENCE);
             assertThat(task.parentTaskId()).isEqualTo("c1");

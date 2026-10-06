@@ -37,8 +37,8 @@ public class LlmResearchPlanner implements ResearchPlanner {
     }
 
     @Override
-    public List<ResearchTask> replan(List<ResearchChallenge> challenges, int round) {
-        if (challenges.isEmpty()) return List.of();
+    public ReplanResult replan(List<ResearchChallenge> challenges, int round) {
+        if (challenges.isEmpty()) return ReplanResult.llm(List.of(), "没有待选择的Challenge");
         try {
             String candidates = mapper.writeValueAsString(challenges.stream().map(challenge -> Map.of(
                     "findingRuleCode", challenge.findingRuleCode(),
@@ -53,9 +53,17 @@ public class LlmResearchPlanner implements ResearchPlanner {
                     .call()
                     .content();
             List<ResearchChallenge> selected = parser.select(output, challenges, 3);
-            return selected.isEmpty() ? fallback.replan(challenges, round) : fallback.replan(selected, round);
+            if (selected.isEmpty()) {
+                ReplanResult fallbackResult = fallback.replan(challenges, round);
+                return ReplanResult.fallback(fallbackResult.tasks(), "模型输出未通过候选约束，已确定性降级");
+            }
+            ReplanResult selectedResult = fallback.replan(selected, round);
+            return ReplanResult.llm(selectedResult.tasks(), "模型从 " + challenges.size()
+                    + " 项Challenge中选择 " + selected.size() + " 项");
         } catch (JsonProcessingException | RuntimeException exception) {
-            return fallback.replan(challenges, round);
+            ReplanResult fallbackResult = fallback.replan(challenges, round);
+            return ReplanResult.fallback(fallbackResult.tasks(), "模型调用或解析失败，已确定性降级："
+                    + exception.getClass().getSimpleName());
         }
     }
 }

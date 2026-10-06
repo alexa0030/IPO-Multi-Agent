@@ -8,6 +8,7 @@ import com.ipoagent.domain.ResearchChallenge;
 import com.ipoagent.domain.ResearchTask;
 import com.ipoagent.orchestration.InvestmentReviewGate;
 import com.ipoagent.orchestration.ResearchPlanner;
+import com.ipoagent.orchestration.ReplanResult;
 import com.ipoagent.risk.MetricEngine;
 import com.ipoagent.risk.RiskRuleEngine;
 import org.springframework.stereotype.Component;
@@ -51,12 +52,14 @@ public class DeterministicResearchWorkflow implements IpoResearchWorkflow {
         int replanRounds = 0;
         if (!challenges.isEmpty() && maxReplanRounds > 0) {
             replanRounds = 1;
-            List<ResearchTask> followUps = planner.replan(challenges, replanRounds);
+            ReplanResult replan = planner.replan(challenges, replanRounds);
+            List<ResearchTask> followUps = replan.tasks();
             for (ResearchTask followUp : followUps) {
                 tasks.add(followUp.unableToVerify("尚未连接外部补证Executor，保留为证据缺口"));
             }
             trace.add(AgentTrace.completed("bounded-replan", "执行第1轮且仅一轮补证规划，共 "
-                    + followUps.size() + " 项；未核实事项不自动升级为风险"));
+                    + followUps.size() + " 项；plannerMode=" + replan.plannerMode()
+                    + "；" + replan.detail() + "；未核实事项不自动升级为风险"));
         }
         return new WorkflowResult(metrics, findings, List.copyOf(tasks), challenges, replanRounds, trace);
     }

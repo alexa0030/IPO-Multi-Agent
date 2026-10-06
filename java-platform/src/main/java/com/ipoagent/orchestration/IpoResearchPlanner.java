@@ -22,7 +22,7 @@ public class IpoResearchPlanner implements ResearchPlanner {
     }
 
     @Override
-    public List<ResearchTask> replan(List<ResearchChallenge> challenges, int round) {
+    public ReplanResult replan(List<ResearchChallenge> challenges, int round) {
         List<ResearchTask> tasks = new ArrayList<>();
         for (ResearchChallenge challenge : challenges) {
             tasks.add(ResearchTask.pending(
@@ -33,6 +33,6 @@ public class IpoResearchPlanner implements ResearchPlanner {
                     challenge.challengeId()
             ));
         }
-        return List.copyOf(tasks);
+        return ReplanResult.deterministic(tasks, "按全部Reviewer Challenge生成补证任务");
     }
 }

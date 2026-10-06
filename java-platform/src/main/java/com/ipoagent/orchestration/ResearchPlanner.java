@@ -9,5 +9,5 @@ import java.util.List;
 public interface ResearchPlanner {
     List<ResearchTask> initialPlan(AnalysisRequest request);
 
-    List<ResearchTask> replan(List<ResearchChallenge> challenges, int round);
+    ReplanResult replan(List<ResearchChallenge> challenges, int round);
 }
