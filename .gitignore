@@ -6,6 +6,8 @@ __pycache__/
 .pytest_cache/
 .pytest_tmp*/
 .ruff_cache/
+.coverage
+htmlcov/
 .cache/
 *.log
 work/
@@ -14,7 +16,6 @@ evaluation/predictions/
 *.before_*
 *.safetensors
 model/
-java-platform/target/
 data/uploads/*
 data/extracted/*
 data/output/*

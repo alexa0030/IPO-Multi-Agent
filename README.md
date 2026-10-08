@@ -3,7 +3,7 @@
 > 将数百页港股招股书转化为可追溯、可复核的投研底稿与尽调报告。
 
 ![Python](https://img.shields.io/badge/Python-3.10--3.12-3776AB)
-![Tests](https://img.shields.io/badge/tests-141%20passed-0b5d42)
+![Tests](https://img.shields.io/badge/tests-pytest%20%2B%20mock-0b5d42)
 ![E2E](https://img.shields.io/badge/504--page%20case-verified-0b5d42)
 ![Model](https://img.shields.io/badge/LLM-OpenAI--compatible-6f42c1)
 ![Stage](https://img.shields.io/badge/release-v0.9%20MVP-d97706)
@@ -12,7 +12,7 @@
 
 它的核心目标不是让模型“读完后给一个答案”，而是把 IPO 研究拆成一条可审计的生产流程：**数字交给确定性程序，判断交给专业 Agent，结论必须回到证据。**
 
-> **Java V2（建设中）**：仓库新增 [`java-platform/`](java-platform/) 作为 Spring Boot 控制面与服务层，逐步承担任务 API、确定性指标/风险规则、执行轨迹和后续 Agent 编排。Python 主线继续承担成熟的 PDF 解析和研究能力，两端通过 [`contracts/`](contracts/) 的共享契约与回归样例保持口径一致，而不是推倒重写。
+当前仓库收敛为单一 Python 技术栈：FastAPI 提供产品接口，LangGraph 负责任务编排，确定性 Python 模块负责文档、财务与规则计算。模型调用始终位于可替换边界之后，离线测试不依赖真实 API。
 
 [产品能力](#产品能力) · [工作流程](#工作流程) · [真实案例](#真实案例) · [快速开始](#快速开始) · [交付产物](#交付产物) · [系统设计](#系统设计)
 
@@ -111,7 +111,7 @@ Agent 之间不传递自由文本“聊天记录”，而是通过 Pydantic 定�
 python -m venv .venv
 # Windows: .venv\Scripts\activate
 # Linux/macOS: source .venv/bin/activate
-pip install -e ".[dev,ui,search]"
+pip install -e ".[dev,api,ui,search]"
 ```
 
 复制 `.env.example` 为 `.env`。真实 PDF、API Key、数据库和运行结果均已被 Git 忽略。
@@ -134,15 +134,6 @@ OPENAI_COMPATIBLE_BASE_URL=http://127.0.0.1:8000/v1
 OPENAI_COMPATIBLE_MODEL=qwen-local
 ```
 
-Java Planner 接入同一 OpenAI-compatible 服务时，再设置：
-
-```bash
-IPO_CHAT_MODEL=openai
-IPO_LLM_PLANNER_ENABLED=true
-```
-
-默认两个开关均不启用，确定性财务计算、风险规则和离线测试不会调用大模型。
-
 ```bash
 python main.py --pdf "data/uploads/prospectus.pdf" --company "示例公司" --llm-mode auto
 ```
@@ -156,6 +147,30 @@ streamlit run app.py --server.address 0.0.0.0 --server.port 8501
 ```
 
 Windows 也可以直接运行 `run_demo.bat` 浏览脱敏演示界面。
+
+### 5. 启动任务 API
+
+```bash
+uvicorn ipo_financial_agent.api.app:app --host 0.0.0.0 --port 8080
+```
+
+API 提供四类核心能力：
+
+- `POST /api/v1/documents`：上传并校验 PDF；
+- `POST /api/v1/jobs`：创建研究任务，选择 `off`、`auto` 或 `on` 模式；
+- `GET /api/v1/jobs/{job_id}`：查询任务状态和稳定错误码；
+- `GET /api/v1/jobs/{job_id}/report`：读取完成后的 Markdown 报告。
+
+非法文件、文档或任务不存在、流水线异常与报告未就绪分别返回明确的 HTTP 状态；模型超时等执行异常被记录为失败任务，不会令 API 进程直接崩溃。
+
+容器化运行：
+
+```bash
+docker build -t ipo-research-agent .
+docker run --rm -p 8080:8080 -v "$(pwd)/data:/app/data" ipo-research-agent
+```
+
+镜像默认以非 root 用户运行 FastAPI，并配置 `/health` 容器健康检查。
 
 ## 交付产物
 
@@ -174,12 +189,9 @@ data/output/<job_id>/
 
 ## 系统设计
 
-Java V2 的职责边界、演进顺序和参考架构见 [`docs/java-v2-architecture.md`](docs/java-v2-architecture.md)。当前已完成结构化事实 → Java 指标引擎 → 风险观察 → Job API 的 V0.1 纵向切片，并配置 Python/Java 共享 Hosonsoft fixture 与 GitHub Actions 编译测试。
-
 ```text
-contracts/                       # Python/Java 共享 Schema 与核实案例
-java-platform/                   # Spring Boot API、规则引擎和工作流
 src/ipo_financial_agent/
+├── api/          # FastAPI 文档、任务、状态与报告接口
 ├── agents/       # Financial / Company / Industry / Legal Agents
 ├── document/     # PDF 页面、章节与主题定位
 ├── extraction/   # 表格与财务事实抽取
@@ -206,9 +218,10 @@ src/ipo_financial_agent/
 ```bash
 python -m compileall -q src main.py app.py
 python -m pytest -q
+python -m pytest --cov=ipo_financial_agent --cov-report=term-missing
 ```
 
-当前版本基线为 **141 passed**，覆盖文档定位、主体识别、三表重建、指标与法证规则、Agent 工具预算、上下文预检、Reviewer/Skeptic 闭环、Evidence 引用、报告交付和评测流程。
+当前可复现基线为 **148 passed、全包语句覆盖率 59%**；CI 设置 55% 回归下限，阶段目标为逐步提升到 80%，而不是提前包装数字。测试按职责覆盖确定性财务计算、规则边界、主体识别、Agent 工具预算、LLM 非法输出与失败降级、Reviewer/Skeptic 闭环、Evidence 引用、FastAPI 错误响应和报告交付。LLM 生成质量通过独立评测集衡量，不等同于单元测试通过率。
 
 评测工具：
 

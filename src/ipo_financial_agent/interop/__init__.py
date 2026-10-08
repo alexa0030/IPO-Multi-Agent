@@ -1,4 +1,4 @@
-"""Cross-language contracts used by the Java V2 control plane."""
+"""Verified-fact contracts exposed at the parser service boundary."""
 
 from ipo_financial_agent.interop.parser_contract import (
     ParserAnalysisRequest,

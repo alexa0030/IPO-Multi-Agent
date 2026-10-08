@@ -6,6 +6,10 @@ The system optimizes for traceability, deterministic financial calculations, bou
 
 ## Layers
 
+### 0. API and job boundary
+
+FastAPI owns PDF validation, job creation, status lookup, and report delivery. Routes depend on a small job service and pipeline protocol, so tests can inject deterministic, timeout, and failure runners without calling a real model. Worker exceptions become explicit failed states; they do not crash the HTTP process.
+
 ### 1. Document layer
 
 - `pages.json` stores physical page numbers, text, and raw tables.

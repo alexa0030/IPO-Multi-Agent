@@ -1,0 +1,14 @@
+.git
+.github
+.venv*
+__pycache__
+.pytest_cache
+.ruff_cache
+data/uploads/*
+data/extracted/*
+data/output/*
+data/db/*
+evaluation/predictions
+*.pyc
+*.pdf
+*.safetensors
